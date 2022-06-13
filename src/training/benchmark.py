@@ -250,6 +250,11 @@ def main():
         sampler.set_epoch(0)
 
     optimization_step = 0
+    if hasattr(model, "visual"):
+        image_size = model.visual.image_size
+    else:
+        image_size = model.module.visual.image_size
+
     while True:
         for batch in dataloader:
             if optimization_step == args.bench_steps + args.bench_warmup:
@@ -258,11 +263,13 @@ def main():
                 t0 = time.perf_counter()
 
             step = optimization_step
+            if is_master(args):
+                logging.info(f'Step: {step}')
             scheduler(step)
 
             if args.synthetic_data:
-                images = torch.randn(args.batch_size, 3, model.module.visual.image_size,
-                    model.module.visual.image_size, device=device)
+                images = torch.randn(args.batch_size, 3, image_size,
+                    image_size, device=device)
                 texts = tokenize("Test sentence")[0]
                 texts = torch.stack([texts] * args.batch_size)
                 texts = texts.to(device=device, non_blocking=True)

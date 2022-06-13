@@ -13,7 +13,7 @@ export NCCL_DEBUG=INFO
 export GPUS_PER_NODE=TEMPLATE_GPUS_PER_NODE
 export WORLD_SIZE=$((NODES*GPUS_PER_NODE))
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
-jsrun -n${NODES} -a${GPUS_PER_NODE} -g${GPUS_PER_NODE} python -u src/training/benchmark.py TEMPLATE_EXTRA \
+jsrun -n${NODES} -a${GPUS_PER_NODE} -g${GPUS_PER_NODE} -c24 -b packed:4 python -u src/training/benchmark.py TEMPLATE_EXTRA \
     --save-frequency 1 \
     --zeroshot-frequency 1 \
     --report-to tensorboard \

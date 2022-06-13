@@ -1,4 +1,4 @@
-LOGS = "/gpfs/alpine/csc499/scratch/mcherti/open_clip/logs"
+LOGS = "logs"
 template = open("template.lsf").read()
 for dataset in ("synthetic",):
     for model in ("ViT-B/32",):
