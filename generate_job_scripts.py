@@ -1,12 +1,12 @@
 LOGS = "logs"
 template = open("template.lsf").read()
-for dataset in ("synthetic",):
-    for model in ("ViT-B/32",):
-        for nodes in (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048):
+for dataset in ("laion400m",):
+    for model in ("ViT-L/14",):
+        for nodes in (1, 2, 4, 8, 16, 32, 64, 128, 256):
             gpus = (1, 6) if nodes == 1 else (6,)
             for gpus_per_node in gpus:
                 model_slug = model.replace("/", "-")
-                batch_size = 256 if model == "ViT-B/32" else 32
+                batch_size = 256 if model == "ViT-B/32" else 64
                 extra = "--synthetic-data" if dataset == "synthetic" else ""
                 name = f"N{nodes}_G{gpus_per_node}_M{model_slug}_B{batch_size}_{dataset}"
                 s = template

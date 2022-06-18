@@ -8,7 +8,7 @@ pattern_secs = r"Benchmarking completed in ([0-9]+\.[0-9]+) seconds"
 rows  = []
 for logfile in glob(os.path.join(LOGS, "**", "out.log")):
     name = os.path.basename(os.path.dirname(logfile))
-    nodes, gpus_per_node, model, bs, data = name.split("_")
+    nodes, gpus_per_node, model, bs, ds = name.split("_")
     nodes = nodes[1:]
     gpus_per_node = gpus_per_node[1:]
     model = model[1:]
@@ -25,6 +25,7 @@ for logfile in glob(os.path.join(LOGS, "**", "out.log")):
             "local_batch_size": int(bs),
             "samples_per_sec": float(imps.groups(1)[0]),
             "secs_per_batch": float(secs.groups(1)[0]) / (1000),
+            "dataset": ds
         })
 df = pd.DataFrame(rows)
 df = df.sort_values(by=["nodes", "gpus_per_node"])
