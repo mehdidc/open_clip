@@ -65,11 +65,11 @@ def main():
         os.makedirs(log_base_path, exist_ok=True)
         log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
         args.log_path = os.path.join(log_base_path, log_filename)
-        if os.path.exists(args.log_path):
-            print(
-                "Error. Experiment already exists. Use --name {} to specify a new experiment."
-            )
-            return -1
+        # if os.path.exists(args.log_path):
+            # print(
+                # "Error. Experiment already exists. Use --name {} to specify a new experiment."
+            # )
+            # return -1
 
     # Set logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
@@ -188,20 +188,27 @@ def main():
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
-        if os.path.isfile(args.resume):
-            checkpoint = torch.load(args.resume, map_location=device)
-            if 'epoch' in checkpoint:
-                # resuming a train checkpoint w/ epoch and optimizer state
-                start_epoch = checkpoint["epoch"]
-                sd = checkpoint["state_dict"]
-                if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
-                    sd = {k[len('module.'):]: v for k, v in sd.items()}
-                model.load_state_dict(sd)
-                if optimizer is not None:
-                    optimizer.load_state_dict(checkpoint["optimizer"])
-                if scaler is not None and 'scaler' in checkpoint:
-                    scaler.load_state_dict(checkpoint['scaler'])
-                logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
+        if os.path.isfile(args.resume) or os.path.isdir(args.resume):
+            if os.path.isdir(args.resume):
+                from glob import glob
+                paths = glob(os.path.join(args.resume, "*.pt"))
+                epochs = [int(os.path.basename(p).replace(".pt", "").split("_")[1]) for p in paths]
+                epoch_max = np.argmax(epochs)
+                args.resume = paths[epoch_max]
+            if os.path.exists(args.resume):
+                checkpoint = torch.load(args.resume, map_location=device)
+                if 'epoch' in checkpoint:
+                    # resuming a train checkpoint w/ epoch and optimizer state
+                    start_epoch = checkpoint["epoch"]
+                    sd = checkpoint["state_dict"]
+                    if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
+                        sd = {k[len('module.'):]: v for k, v in sd.items()}
+                    model.load_state_dict(sd)
+                    if optimizer is not None:
+                        optimizer.load_state_dict(checkpoint["optimizer"])
+                    if scaler is not None and 'scaler' in checkpoint:
+                        scaler.load_state_dict(checkpoint['scaler'])
+                    logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
             else:
                 # loading a bare (model only) checkpoint for fine-tune or evaluation
                 model.load_state_dict(checkpoint)
@@ -289,11 +296,11 @@ def main():
 def copy_codebase(args):
     from shutil import copytree, ignore_patterns
     new_code_path = os.path.join(args.logs, args.name, "code")
-    if os.path.exists(new_code_path):
-        print(
-            f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
-        )
-        return -1
+    # if os.path.exists(new_code_path):
+        # print(
+            # f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
+        # )
+        # return -1
     print(f"Copying codebase to {new_code_path}")
     current_code_path = os.path.realpath(__file__)
     for _ in range(3):
