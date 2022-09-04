@@ -268,8 +268,8 @@ def main():
             scheduler(step)
 
             if args.synthetic_data:
-                images = torch.randn(args.batch_size, 3, image_size,
-                    image_size, device=device)
+                images = torch.randn(args.batch_size, 3, image_size[0],
+                    image_size[1], device=device)
                 texts = tokenize("Test sentence")[0]
                 texts = torch.stack([texts] * args.batch_size)
                 texts = texts.to(device=device, non_blocking=True)
