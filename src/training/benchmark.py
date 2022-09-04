@@ -243,6 +243,7 @@ def main():
 
     if args.synthetic_data:
         dataloader = [0 for i in range(args.bench_steps)]
+        sampler = None
     else:
         dataloader, sampler = data['train'].dataloader, data['train'].sampler
     if args.distributed and sampler is not None:
