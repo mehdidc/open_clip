@@ -28,7 +28,7 @@ from training.data import get_data
 from training.distributed import is_master, init_distributed_device, world_info_from_env
 from training.logger import setup_logging
 from training.params import parse_args
-from training.scheduler import cosine_lr
+from training.scheduler import cosine_lr, inverse_sqrt_lr
 from training.train import train_one_epoch, evaluate
 
 
@@ -40,6 +40,14 @@ def random_seed(seed=42, rank=0):
 
 def main():
     args = parse_args()
+
+    if torch.cuda.is_available():
+        # This enables tf32 on Ampere GPUs which is only 8% slower than
+        # float16 and almost as accurate as float32
+        # This was a default in pytorch until 1.12
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
 
     # sanitize model name for filesystem / uri use, easier if we don't use / in name as a rule?
     args.model = args.model.replace('/', '-')
@@ -76,8 +84,6 @@ def main():
     setup_logging(args.log_path, args.log_level)
 
     # fully initialize distributed device environment
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = False
     device = init_distributed_device(args)
 
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
@@ -95,7 +101,7 @@ def main():
     if args.copy_codebase:
         copy_codebase(args)
 
-    assert args.precision in ['amp', 'fp16', 'fp32']
+    assert args.precision in ['amp', 'amp_bfloat16', 'fp16', 'fp32']
     if args.precision == 'fp16':
         logging.warning(
             'It is recommended to use AMP mixed-precision instead of FP16. '
@@ -121,6 +127,8 @@ def main():
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         pretrained_image=args.pretrained_image,
+        image_mean=args.image_mean,
+        image_std=args.image_std,
     )
     random_seed(args.seed, args.rank)
 
@@ -224,7 +232,12 @@ def main():
     scheduler = None
     if 'train' in data and optimizer is not None:
         total_steps = data["train"].dataloader.num_batches * args.epochs
-        scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        if args.scheduler == "cosine":
+            scheduler = cosine_lr(optimizer, args.lr, args.warmup, total_steps)
+        elif args.scheduler == "inv_sqrt":
+            scheduler = inverse_sqrt_lr(optimizer, args.lr, args.warmup, total_steps)
+        else:
+            raise ValueError()
 
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
     args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
@@ -242,6 +255,7 @@ def main():
         # you will have to configure this for your project!
         wandb.init(
             project="open-clip",
+            name=args.name,
             notes=args.wandb_notes,
             tags=[],
             config=vars(args),
