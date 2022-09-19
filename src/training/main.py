@@ -195,15 +195,19 @@ def main():
 
     # optionally resume from a checkpoint
     start_epoch = 0
+    checkpoint = None
     if args.resume is not None:
         if os.path.isfile(args.resume) or os.path.isdir(args.resume):
             if os.path.isdir(args.resume):
                 from glob import glob
                 paths = glob(os.path.join(args.resume, "*.pt"))
-                epochs = [int(os.path.basename(p).replace(".pt", "").split("_")[1]) for p in paths]
-                epoch_max = np.argmax(epochs)
-                args.resume = paths[epoch_max]
-            if os.path.exists(args.resume):
+                if len(paths):
+                    epochs = [int(os.path.basename(p).replace(".pt", "").split("_")[1]) for p in paths]
+                    epoch_max = np.argmax(epochs)
+                    args.resume = paths[epoch_max]
+                else:
+                    args.resume = None
+            if args.resume is not None and os.path.exists(args.resume):
                 checkpoint = torch.load(args.resume, map_location=device)
                 if 'epoch' in checkpoint:
                     # resuming a train checkpoint w/ epoch and optimizer state
@@ -217,10 +221,10 @@ def main():
                     if scaler is not None and 'scaler' in checkpoint:
                         scaler.load_state_dict(checkpoint['scaler'])
                     logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
-            else:
-                # loading a bare (model only) checkpoint for fine-tune or evaluation
-                model.load_state_dict(checkpoint)
-                logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
+                else:
+                    # loading a bare (model only) checkpoint for fine-tune or evaluation
+                    model.load_state_dict(checkpoint)
+                    logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
 
