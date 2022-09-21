@@ -282,7 +282,7 @@ def main():
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
             evaluate(model, data, completed_epoch, args, writer)
-
+        
         # Saving checkpoints.
         if args.save_logs:
             checkpoint_dict = {
@@ -306,6 +306,8 @@ def main():
                     checkpoint_dict,
                     os.path.join(args.checkpoint_path, f"epoch_latest.pt"),
                 )
+        if is_master(args):
+            logging.info(f'Finishing Epoch: {completed_epoch}')
 
     if args.wandb and is_master(args):
         wandb.finish()
