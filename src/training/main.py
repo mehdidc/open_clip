@@ -73,7 +73,7 @@ def main():
         os.makedirs(log_base_path, exist_ok=True)
         log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
         args.log_path = os.path.join(log_base_path, log_filename)
-        if os.path.exists(args.log_path):
+        if os.path.exists(args.log_path) and not (args.resume and os.path.isfile(args.resume)):
             print(
                 "Error. Experiment already exists. Use --name {} to specify a new experiment."
             )
@@ -298,7 +298,7 @@ def main():
 def copy_codebase(args):
     from shutil import copytree, ignore_patterns
     new_code_path = os.path.join(args.logs, args.name, "code")
-    if os.path.exists(new_code_path):
+    if os.path.exists(new_code_path) and not (args.resume and os.path.isfile(args.resume)):
         print(
             f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
         )
