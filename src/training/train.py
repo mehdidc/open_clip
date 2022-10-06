@@ -153,7 +153,7 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
     # end for
     end_bench = time.time()
     if is_master(args):
-        logging.info(f"Epoch duration: {end_bench - start_bench}")
+        print(f"Epoch duration: {end_bench - start_bench}")
 
 
 def evaluate(model, data, epoch, args, tb_writer=None):
