@@ -109,6 +109,9 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i + 1
+        if i == 1:
+            start_bench = time.time()
+
         if is_master(args) and (i % 100 == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.world_size
@@ -148,6 +151,8 @@ def train_one_epoch(model, data, epoch, optimizer, scaler, scheduler, args, tb_w
             batch_time_m.reset()
             data_time_m.reset()
     # end for
+    end_bench = time.time()
+    logging.info(f"Epoch duration: {end_bench - start_bench}")
 
 
 def evaluate(model, data, epoch, args, tb_writer=None):
