@@ -230,6 +230,8 @@ class CLIP(nn.Module):
     def forward(self, image, text):
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
+        with torch.no_grad():
+           self.logit_scale.data.clamp_(0, math.log(100))
         if self.output_dict:
             return {
                 "image_features": image_features,
