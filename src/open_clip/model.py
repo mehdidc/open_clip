@@ -281,25 +281,20 @@ class CustomTextCLIP(nn.Module):
         features = self.text(text)
         return F.normalize(features, dim=-1) if normalize else features
 
-    """
-    def forward(self, image, text):
-        image_features = self.encode_image(image, normalize=True)
-        text_features = self.encode_text(text, normalize=True)
-        if self.output_dict:
-            return {
-                "image_features": image_features,
-                "text_features": text_features,
-                "logit_scale": self.logit_scale.exp()
-            }
-        return image_features, text_features, self.logit_scale.exp()
-    """
     def forward(self, image, text, clamp_logit_scale_to=None):
         image_features = self.encode_image(image, normalize=True) if image is not None else None
         text_features = self.encode_text(text, normalize=True) if text is not None else None
         if clamp_logit_scale_to is not None:
             with torch.no_grad():
                 self.logit_scale.data.clamp_(0, clamp_logit_scale_to)
-        return image_features, text_features, self.logit_scale.exp()
+        if self.output_dict:
+            return {
+                "image_features": image_features,
+                "text_features": text_features,
+                "logit_scale": self.logit_scale.exp()
+            }
+        else:
+            return image_features, text_features, self.logit_scale.exp()
 
 
 def convert_weights_to_lp(model: nn.Module, dtype=torch.float16):
