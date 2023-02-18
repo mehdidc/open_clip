@@ -41,6 +41,7 @@ from training.train import train_one_epoch, evaluate
 from training.file_utils import pt_load, check_exists, start_sync_process, remote_sync
 
 
+
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
 
@@ -69,7 +70,6 @@ def get_latest_checkpoint(path: str, remote : bool):
         checkpoints = sorted(checkpoints, key=natural_key)
         return checkpoints[-1]
     return None
-
 
 def main(args):
     args = parse_args(args)
@@ -305,6 +305,7 @@ def main(args):
                     if re.match(layer, name):
                         layers.add(module.__class__)
             print("Wrapped layers", layers)
+
             wrapper_kwargs = dict(
                 mixed_precision=mp,
                 limit_all_gathers=args.fsdp_limit_allgathers,
@@ -322,9 +323,6 @@ def main(args):
             #model.visual = FSDP(model.visual, device_id=device)
             #model.text_projection = FSDP(model.text_projection) ???
             #model.ln_final = FSDP(model.ln_final, device_id=device)
-            model = FSDP(model, **wrapper_kwargs)
-            print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
-            print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             if args.lock_image:
                 # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
                 model.lock_image_tower(
@@ -334,6 +332,9 @@ def main(args):
                 model.lock_text_tower(
                     unlocked_layers=args.lock_text_unlocked_layers,
                     freeze_layer_norm=args.lock_text_freeze_layer_norm)
+            model = FSDP(model, **wrapper_kwargs)
+            print(f"After FSTP parameter num: {sum(p.numel() for p in model.parameters())}")
+            print(f"After FSDP {torch.cuda.memory_allocated()/1024**3:.3} GB")
             if args.grad_checkpointing:
                 #https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
                 layers_grad_checkpoint = set()
@@ -356,8 +357,6 @@ def main(args):
                 apply_activation_checkpointing(
                     model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
                 )
-
-
         else:
             print("--distrubted_engine should be either 'ddp or 'fsdp'")
             sys.exit(1)
@@ -391,7 +390,6 @@ def main(args):
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
         scaler = GradScaler() if args.precision == "amp" else None
-
     # optionally resume from a checkpoint
     start_epoch = 0
     if args.resume is not None:
@@ -412,7 +410,6 @@ def main(args):
             # loading a bare (model only) checkpoint for fine-tune or evaluation
             model.load_state_dict(checkpoint)
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
-
     # initialize datasets
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
     assert len(data), 'At least one train or eval dataset must be specified.'
@@ -436,9 +433,8 @@ def main(args):
             logging.error(
                 f'Unknown scheduler, {args.lr_scheduler}. Available options are: cosine, const, const-cooldown.')
             exit(1)
-
     # determine if this worker should save logs and checkpoints. only do so if it is rank == 0
-    args.save_logs = args.logs and args.logs.lower() != 'none' and is_master(args)
+    args.save_logs = args.logs and args.logs.lower() != 'none' and (is_master(args) or args.distributed_engine == 'fsdp')
     writer = None
     if args.save_logs and args.tensorboard:
         assert tensorboard is not None, "Please install tensorboard."
@@ -470,11 +466,9 @@ def main(args):
         return
 
     loss = create_loss(args)
-
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
-
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
@@ -491,25 +485,25 @@ def main(args):
             }
             if scaler is not None:
                 checkpoint_dict["scaler"] = scaler.state_dict()
+            if is_master(args):
+                if completed_epoch == args.epochs or (
+                    args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
+                ):
+                    torch.save(
+                        checkpoint_dict,
+                        os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
+                    )
+                if args.delete_previous_checkpoint:
+                    previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
+                    if os.path.exists(previous_checkpoint):
+                        os.remove(previous_checkpoint)
 
-            if completed_epoch == args.epochs or (
-                args.save_frequency > 0 and (completed_epoch % args.save_frequency) == 0
-            ):
-                torch.save(
-                    checkpoint_dict,
-                    os.path.join(args.checkpoint_path, f"epoch_{completed_epoch}.pt"),
-                )
-            if args.delete_previous_checkpoint:
-                previous_checkpoint = os.path.join(args.checkpoint_path, f"epoch_{completed_epoch - 1}.pt")
-                if os.path.exists(previous_checkpoint):
-                    os.remove(previous_checkpoint)
-
-            if args.save_most_recent:
-                # try not to corrupt the latest checkpoint if save fails
-                tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
-                latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
-                torch.save(checkpoint_dict, tmp_save_path)
-                os.replace(tmp_save_path, latest_save_path)
+                if args.save_most_recent:
+                    # try not to corrupt the latest checkpoint if save fails
+                    tmp_save_path = os.path.join(args.checkpoint_path, "tmp.pt")
+                    latest_save_path = os.path.join(args.checkpoint_path, LATEST_CHECKPOINT_NAME)
+                    torch.save(checkpoint_dict, tmp_save_path)
+                    os.replace(tmp_save_path, latest_save_path)
 
     if args.wandb and is_master(args):
         wandb.finish()
