@@ -61,7 +61,7 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
-
+    project_tokens:bool = False
 
 def get_cast_dtype(precision: str):
     cast_dtype = None
@@ -151,6 +151,7 @@ def _build_text_tower(
             pooler_type=text_cfg.pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
             output_tokens=text_cfg.output_tokens,
+            project_tokens=text_cfg.project_tokens,
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -278,6 +279,7 @@ class CustomTextCLIP(nn.Module):
         return F.normalize(features, dim=-1) if normalize else features
 
     def forward(self, image, text):
+        # print(image[0].shape, image[1].shape)
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
         if self.output_dict:

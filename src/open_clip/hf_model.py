@@ -11,7 +11,7 @@ from torch import TensorType
 
 try:
     import transformers
-    from transformers import AutoModel, AutoTokenizer, AutoConfig, PretrainedConfig
+    from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer, AutoConfig, PretrainedConfig
     from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling, \
         BaseModelOutputWithPoolingAndCrossAttentions
 except ImportError as e:
@@ -93,9 +93,11 @@ class HFTextEncoder(nn.Module):
             proj: str = None,
             pretrained: bool = True,
             output_tokens: bool = False,
+            project_tokens = False,
     ):
         super().__init__()
         self.output_tokens = output_tokens
+        self.project_tokens = project_tokens
         self.output_dim = output_dim
 
         # TODO: find better way to get this information
@@ -112,7 +114,11 @@ class HFTextEncoder(nn.Module):
                 self.transformer = create_func(model_args)
                 self.transformer = self.transformer.encoder
             else:
-                self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
+                if "gpt" in model_name_or_path:
+                    self.transformer = create_func(model_args)
+                else:
+                    self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
+                
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
@@ -146,7 +152,8 @@ class HFTextEncoder(nn.Module):
             if type(self.pooler) == ClsPooler 
             else out.last_hidden_state
         )
-        
+        if self.project_tokens:
+            tokens = self.proj(tokens)
         if self.output_tokens:
             return projected, tokens
         return projected

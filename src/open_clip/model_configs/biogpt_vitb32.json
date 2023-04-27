@@ -1,0 +1,17 @@
+{
+    "embed_dim": 1024,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 12,
+        "width": 1024,
+        "patch_size": 32
+    },
+    "text_cfg": {
+        "hf_model_name": "microsoft/biogpt",
+        "hf_tokenizer_name": "microsoft/biogpt",
+        "proj": "linear",
+        "width": 1024,
+        "context_length": 256
+    },
+    "custom_text": true
+}
