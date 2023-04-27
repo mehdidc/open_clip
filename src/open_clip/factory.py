@@ -260,6 +260,7 @@ def create_loss(args):
             rank=args.rank,
             world_size=args.world_size,
             use_horovod=args.horovod,
+            pad_id=args.pad_token,
         )
     return ClipLoss(
         local_loss=args.local_loss,
