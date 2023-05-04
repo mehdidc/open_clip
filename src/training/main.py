@@ -345,7 +345,10 @@ def main(args):
             logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     # initialize datasets
-    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
+    tokenizer = get_tokenizer(args.model)
+    args.pad_token = tokenizer.pad_token if hasattr(tokenizer, "pad_token") else 0
+    print("pad token", args.pad_token)
+    data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=tokenizer)
     assert len(data), 'At least one train or eval dataset must be specified.'
 
     # create scheduler if train
@@ -404,7 +407,7 @@ def main(args):
         # Evaluate.
         evaluate(model, data, start_epoch, args, writer)
         return
-
+    
     loss = create_loss(args)
 
     for epoch in range(start_epoch, args.epochs):

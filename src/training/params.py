@@ -373,6 +373,12 @@ def parse_args(args):
         help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
     parser.add_argument(
+        "--context-length",
+        type=int,
+        default=77,
+        help="Log every n steps to tensorboard/console/wandb.",
+    )
+    parser.add_argument(
         "--log-every-n-steps",
         type=int,
         default=100,

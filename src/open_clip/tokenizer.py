@@ -194,6 +194,7 @@ class HFTokenizer:
     def __init__(self, tokenizer_name: str):
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        self.pad_token = self.tokenizer.pad_token_id
 
     def save_pretrained(self, dest):
         self.tokenizer.save_pretrained(dest)
@@ -204,11 +205,18 @@ class HFTokenizer:
         if isinstance(texts, str):
             texts = [texts]
         texts = [whitespace_clean(basic_clean(text)) for text in texts]
+        if self.tokenizer.name_or_path == "microsoft/biogpt":
+            texts = ["<s>" + t + "</s>" for t in texts]
+            kw = {}
+            kw['add_special_tokens'] = False
+        else:
+            kw = {}
         input_ids = self.tokenizer(
             texts,
             return_tensors='pt',
             max_length=context_length,
             padding='max_length',
             truncation=True,
+            **kw
         ).input_ids
         return input_ids
