@@ -100,7 +100,7 @@ class CoCa(nn.Module):
         )
 
         vocab_size = (
-            text_cfg.vocab_size  # for hf models
+            self.text.config.vocab_size  # for hf models
             if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
             else text_cfg.vocab_size
         )
