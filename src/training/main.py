@@ -307,7 +307,7 @@ def main(args):
             }
             mixed_precision = MixedPrecision(
                 param_dtype=type_name_to_class[args.precision],
-                reduce_dtype=type_name_to_class[args.fsdp_reduce_precision],
+                reduce_dtype=type_name_to_class[args.fsdp_gradient_reduction_precision],
                 buffer_dtype=type_name_to_class[args.fsdp_buffer_precision],
             )
             layers = set()
@@ -435,8 +435,8 @@ def main(args):
         FSDP.set_state_dict_type(
             model,
             StateDictType.FULL_STATE_DICT,
-            FullStateDictConfig(rank0_only=False, offload_to_cpu=True),
-            FullOptimStateDictConfig(rank0_only=False, offload_to_cpu=True),
+            FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
+            FullOptimStateDictConfig(rank0_only=True, offload_to_cpu=True),
         )
     # initialize datasets
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
