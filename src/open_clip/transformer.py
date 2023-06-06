@@ -628,6 +628,25 @@ class TextTransformer(nn.Module):
 
         return pooled
 
+class ProjMultimodalTransformer(nn.Module):
+
+    def __init__(self, model, hidden_image=512, hidden_text=512):
+        super().__init__()
+        width = model.width
+        self.model = model
+        self.proj_image = nn.Linear(hidden_image, width)
+        self.proj_text = nn.Linear(hidden_text, width)
+    
+    def forward(self, image_embs, text_embs):
+        image_embs = self.proj_image(image_embs)
+        text_embs = self.proj_text(text_embs)
+        y =  self.model(image_embs, text_embs)
+        return y
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.grad_checkpointing = enable
+
 
 class MultimodalTransformer(Transformer):
     def __init__(
@@ -641,6 +660,7 @@ class MultimodalTransformer(Transformer):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             output_dim: int = 512,
+            
     ):
 
         super().__init__(
@@ -729,8 +749,8 @@ class PretrainedMultimodalTransformer(torch.nn.Module):
             self,
             decoder,
             norm_layer=LayerNorm,
-            hidden_image=512,
-            hidden_text=512,
+            hidden_image=1664,
+            hidden_text=4096,
     ):
 
         super().__init__()
@@ -758,9 +778,9 @@ class PretrainedMultimodalTransformer(torch.nn.Module):
         seq_len_text = text_embs.shape[1]
         seq_len_image = image_embs.shape[1]
 
-        embs = torch.cat((text_embs, image_embs), dim=0)
+        embs = torch.cat((image_embs, text_embs), dim=1)
         embs = self.decoder(inputs_embeds=embs).last_hidden_state
-        x = embs[:, 0:seq_len_text, :]
+        x = embs[:, seq_len_image:, :]
         x = self.ln_final(x)
         if self.text_projection is not None:
             x = x @ self.text_projection

@@ -11,7 +11,8 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
-    PretrainedMultimodalTransformer
+    PretrainedMultimodalTransformer,
+    ProjMultimodalTransformer,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
@@ -49,7 +50,8 @@ class MultimodalCfg(CLIPTextCfg):
     heads: int = 8
     n_queries: int = 256
     attn_pooler_heads: int = 8
-    pretrained = None
+    pretrained:str = None
+    proj: False
 
 
 def _build_text_decoder_tower(
@@ -57,22 +59,22 @@ def _build_text_decoder_tower(
         multimodal_cfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
+        encoder_decoder=None
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     act_layer = QuickGELU if quick_gelu else nn.GELU
     norm_layer = (
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
     )
-    if multimodal_cfg.pretrained:
-        from transformers import AutoModel
-        encoder_decoder = AutoModel.from_pretrained(multimodal_cfg.pretrained)
+    if multimodal_cfg.pretrained and encoder_decoder is not None:
+        #from transformers import AutoModel
+        #encoder_decoder = AutoModel.from_pretrained(multimodal_cfg.pretrained)
         decoder = encoder_decoder.decoder
         print("DECODER", decoder)
         decoder = PretrainedMultimodalTransformer(
             decoder=decoder,
-            hidden_image=512,
-            hidden_text=512,
-
+            hidden_image=1664,
+            hidden_text=4096,
         )
     else:
         decoder = MultimodalTransformer(
@@ -85,6 +87,9 @@ def _build_text_decoder_tower(
             act_layer=act_layer,
             norm_layer=norm_layer,
         )
+        if multimodal_cfg.proj:
+            decoder = ProjMultimodalTransformer(decoder, hidden_image=1664, hidden_text=4096)
+        print("DECO", decoder.model)
 
     return decoder
 
@@ -130,11 +135,19 @@ class CoCa(nn.Module):
             multimodal_cfg=multimodal_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
+            encoder_decoder=self.text.cache.get("encoder_decoder"),
         )
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         self.pad_id = pad_id
 
+    def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
+        # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)
+
+    def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        self.text.lock(unlocked_layers, freeze_layer_norm)
+    
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)

@@ -61,6 +61,7 @@ class CLIPTextCfg:
     embed_cls: bool = False
     pad_id: int = 0
     output_tokens: bool = False
+    force_causal: bool = False
 
 
 def get_cast_dtype(precision: str):
@@ -151,6 +152,7 @@ def _build_text_tower(
             pooler_type=text_cfg.pooler_type,
             pretrained=text_cfg.hf_model_pretrained,
             output_tokens=text_cfg.output_tokens,
+            force_causal=text_cfg.force_causal,
         )
     else:
         act_layer = QuickGELU if quick_gelu else nn.GELU

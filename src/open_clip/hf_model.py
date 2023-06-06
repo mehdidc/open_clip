@@ -80,6 +80,13 @@ class ClsPooler(nn.Module):
         return x.last_hidden_state[:, self.cls_token_position, :]
 
 
+def make_causal(encoder):
+    encoder.config.is_decoder = True
+    for name, module in encoder.named_modules():
+        module.is_decoder = True
+
+
+
 class HFTextEncoder(nn.Module):
     """HuggingFace model adapter"""
     output_tokens: torch.jit.Final[bool]
@@ -93,14 +100,16 @@ class HFTextEncoder(nn.Module):
             proj: str = None,
             pretrained: bool = True,
             output_tokens: bool = False,
+            force_causal=False,
     ):
         super().__init__()
+        pretrained = False
         self.output_tokens = output_tokens
         self.output_dim = output_dim
-
+        self.cache = {}
         # TODO: find better way to get this information
         uses_transformer_pooler = (pooler_type == "cls_pooler")
-
+        self.encoder_decoder = None
         if transformers is None:
             raise RuntimeError("Please `pip install transformers` to use pre-trained HuggingFace models")
         if config is None:
@@ -110,12 +119,18 @@ class HFTextEncoder(nn.Module):
             # TODO: do all model configs have this attribute? PretrainedConfig does so yes??
             if hasattr(self.config, "is_encoder_decoder") and self.config.is_encoder_decoder:
                 self.transformer = create_func(model_args)
+                self.cache['encoder_decoder'] = self.transformer
                 self.transformer = self.transformer.encoder
             else:
                 self.transformer = create_func(model_args, add_pooling_layer=uses_transformer_pooler)
         else:
             self.config = config
             self.transformer = AutoModel.from_config(config)
+        
+        if force_causal:
+            print("FORCE CAUSAL")
+            make_causal(self.transformer)
+
         if pooler_type is None:  # get default arch pooler
             pooler_type = (arch_dict[self.config.model_type]["pooler"])
         
