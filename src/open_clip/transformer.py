@@ -722,3 +722,53 @@ class MultimodalTransformer(Transformer):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
+
+
+class PretrainedMultimodalTransformer(torch.nn.Module):
+    def __init__(
+            self,
+            decoder,
+            norm_layer=LayerNorm,
+            hidden_image=512,
+            hidden_text=512,
+    ):
+
+        super().__init__()
+        width = decoder.config.d_model
+        self.width = width
+        self.ln_final = norm_layer(width)
+        output_dim = decoder.config.vocab_size
+        self.proj_image = nn.Linear(hidden_image, width)
+        self.proj_text = nn.Linear(hidden_text, width)
+        self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+        self.decoder = decoder
+        self.init_parameters()
+
+    def init_parameters(self):
+        if self.text_projection is not None:
+            nn.init.normal_(self.text_projection, std=self.width ** -0.5)
+
+    def forward(self, image_embs, text_embs):
+        #text_embs = text_embs.permute(1, 0, 2)  # NLD -> LNDsq
+        #image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
+
+        text_embs = self.proj_text(text_embs)
+        image_embs = self.proj_image(image_embs)
+
+        seq_len_text = text_embs.shape[1]
+        seq_len_image = image_embs.shape[1]
+
+        embs = torch.cat((text_embs, image_embs), dim=0)
+        embs = self.decoder(inputs_embeds=embs).last_hidden_state
+        x = embs[:, 0:seq_len_text, :]
+        x = self.ln_final(x)
+        if self.text_projection is not None:
+            x = x @ self.text_projection
+        return x
+
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.grad_checkpointing = enable
+
+

@@ -11,6 +11,7 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
+    PretrainedMultimodalTransformer
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
@@ -48,6 +49,7 @@ class MultimodalCfg(CLIPTextCfg):
     heads: int = 8
     n_queries: int = 256
     attn_pooler_heads: int = 8
+    pretrained = None
 
 
 def _build_text_decoder_tower(
@@ -61,17 +63,28 @@ def _build_text_decoder_tower(
     norm_layer = (
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
     )
+    if multimodal_cfg.pretrained:
+        from transformers import AutoModel
+        encoder_decoder = AutoModel.from_pretrained(multimodal_cfg.pretrained)
+        decoder = encoder_decoder.decoder
+        print("DECODER", decoder)
+        decoder = PretrainedMultimodalTransformer(
+            decoder=decoder,
+            hidden_image=512,
+            hidden_text=512,
 
-    decoder = MultimodalTransformer(
-        context_length=multimodal_cfg.context_length,
-        width=multimodal_cfg.width,
-        heads=multimodal_cfg.heads,
-        layers=multimodal_cfg.layers,
-        ls_init_value=multimodal_cfg.ls_init_value,
-        output_dim=embed_dim,
-        act_layer=act_layer,
-        norm_layer=norm_layer,
-    )
+        )
+    else:
+        decoder = MultimodalTransformer(
+            context_length=multimodal_cfg.context_length,
+            width=multimodal_cfg.width,
+            heads=multimodal_cfg.heads,
+            layers=multimodal_cfg.layers,
+            ls_init_value=multimodal_cfg.ls_init_value,
+            output_dim=embed_dim,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+        )
 
     return decoder
 
