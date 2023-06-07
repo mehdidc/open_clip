@@ -52,6 +52,8 @@ class MultimodalCfg(CLIPTextCfg):
     attn_pooler_heads: int = 8
     pretrained:str = None
     proj: False
+    hidden_image:int = 512
+    hidden_text:int = 512
 
 
 def _build_text_decoder_tower(
@@ -70,11 +72,10 @@ def _build_text_decoder_tower(
         #from transformers import AutoModel
         #encoder_decoder = AutoModel.from_pretrained(multimodal_cfg.pretrained)
         decoder = encoder_decoder.decoder
-        print("DECODER", decoder)
         decoder = PretrainedMultimodalTransformer(
             decoder=decoder,
-            hidden_image=1664,
-            hidden_text=4096,
+            hidden_image=multimodal_cfg.hidden_image,
+            hidden_text=multimodal_cfg.hidden_text,
         )
     else:
         decoder = MultimodalTransformer(
@@ -88,8 +89,9 @@ def _build_text_decoder_tower(
             norm_layer=norm_layer,
         )
         if multimodal_cfg.proj:
-            decoder = ProjMultimodalTransformer(decoder, hidden_image=1664, hidden_text=4096)
-        print("DECO", decoder.model)
+            #decoder = ProjMultimodalTransformer(decoder, hidden_image=1664, hidden_text=4096)
+            #decoder = ProjMultimodalTransformer(decoder, hidden_image=768, hidden_text=512)
+            decoder = ProjMultimodalTransformer(decoder, hidden_image=multimodal_cfg.hidden_image, hidden_text=multimodal_cfg.hidden_text)
 
     return decoder
 
@@ -191,6 +193,7 @@ class CoCa(nn.Module):
         # TODO: add assertion to avoid bugs?
         if text is not None and token_embs is not None:
             labels = text[:, -token_embs.shape[1]:]
+            token_embs.retain_grad()
             logits = self.text_decoder(image_embs, token_embs)
         else:
             labels = None

@@ -128,7 +128,6 @@ class HFTextEncoder(nn.Module):
             self.transformer = AutoModel.from_config(config)
         
         if force_causal:
-            print("FORCE CAUSAL")
             make_causal(self.transformer)
 
         if pooler_type is None:  # get default arch pooler

@@ -1,18 +1,16 @@
 {
-    "embed_dim": 1280,
+    "embed_dim": 768,
     "vision_cfg": {
         "image_size": 224,
-        "layers": 48,
-        "width": 1664,
-        "head_width": 104,
-        "mlp_ratio": 4.9231,
-        "patch_size": 14,
+        "layers": 12,
+        "width": 768,
+        "patch_size": 32,
         "attn_pooler_heads": 8,
         "output_tokens": true
     },
     "text_cfg": {
-        "hf_model_name": "google/mt5-xxl",
-        "hf_tokenizer_name": "google/mt5-xxl",
+        "hf_model_name": "t5-small",
+        "hf_tokenizer_name": "t5-small",
         "proj": "mlp",
         "pooler_type": "mean_pooler",
         "output_tokens": true,
@@ -22,13 +20,14 @@
     "multimodal_cfg": {
         "context_length": 77,
         "vocab_size": 250100,
-        "width": 1024,
+        "width": 768,
         "heads": 16,
-        "layers": 24,
+        "layers": 1,
         "attn_pooler_heads": 8,
         "proj": true,
-        "hidden_image": 1664,
-        "hidden_text": 4096
+        "hidden_image": 768,
+        "hidden_text": 512
+
     },
     "custom_text": true
 }

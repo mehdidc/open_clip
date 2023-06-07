@@ -1,0 +1,17 @@
+{
+    "embed_dim": 1280,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 96,
+        "width": 3328,
+        "head_width": 104,
+        "mlp_ratio": 4.9231,
+        "patch_size": 14
+    },
+    "text_cfg": {
+        "hf_model_name": "google/mt5-xxl",
+        "hf_tokenizer_name": "google/mt5-xxl",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler"
+    }
+}
