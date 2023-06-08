@@ -20,7 +20,7 @@
         "vocab_size": 250100
     },
     "multimodal_cfg": {
-        "pretrained": "google/mt5-xxl",
+        "pretrained_text_decoder": true,
         "hidden_image": 1664,
         "hidden_text": 4096
     },

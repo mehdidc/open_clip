@@ -51,6 +51,7 @@ class MultimodalCfg(CLIPTextCfg):
     n_queries: int = 256
     attn_pooler_heads: int = 8
     pretrained:str = None
+    pretrained_text_decoder: str = None
     proj: False
     hidden_image:int = 512
     hidden_text:int = 512
@@ -68,10 +69,15 @@ def _build_text_decoder_tower(
     norm_layer = (
         LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
     )
-    if multimodal_cfg.pretrained and encoder_decoder is not None:
-        #from transformers import AutoModel
-        #encoder_decoder = AutoModel.from_pretrained(multimodal_cfg.pretrained)
-        decoder = encoder_decoder.decoder
+    if multimodal_cfg.pretrained or multimodal_cfg.pretrained_text_decoder:
+        if multimodal_cfg.pretrained_text_decoder:
+            assert encoder_decoder is not None
+            decoder = encoder_decoder.decoder
+        elif multimodal_cfg.pretrained:
+            from transformers import AutoModel
+            decoder = AutoModel.from_pretrained(multimodal_cfg.pretrained)
+        else:
+            raise ValueError("No pre-trained decoder provided")
         decoder = PretrainedMultimodalTransformer(
             decoder=decoder,
             hidden_image=multimodal_cfg.hidden_image,
