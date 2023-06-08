@@ -75,7 +75,8 @@ def _build_text_decoder_tower(
             decoder = encoder_decoder.decoder
         elif multimodal_cfg.pretrained:
             from transformers import AutoModel
-            decoder = AutoModel.from_pretrained(multimodal_cfg.pretrained)
+            model = AutoModel.from_pretrained(multimodal_cfg.pretrained)
+            decoder = model.decoder if hasattr(model, "decoder") else model
         else:
             raise ValueError("No pre-trained decoder provided")
         decoder = PretrainedMultimodalTransformer(
