@@ -646,6 +646,7 @@ class ProjMultimodalTransformer(nn.Module):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
+        self.model.set_grad_checkpointing(enable)
 
 
 class MultimodalTransformer(Transformer):
@@ -792,9 +793,10 @@ class PretrainedMultimodalTransformer(torch.nn.Module):
             x = x @ self.text_projection
         return x
 
-
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
+        self.decoder.gradient_checkpointing_enable()
+
 
 
