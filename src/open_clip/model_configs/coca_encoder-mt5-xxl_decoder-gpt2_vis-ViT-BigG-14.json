@@ -22,7 +22,7 @@
     "multimodal_cfg": {
         "pretrained": "gpt2",
         "hidden_image": 1664,
-        "hidden_text": 768
+        "hidden_text": 4096
     },
     "custom_text": true
 }

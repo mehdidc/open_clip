@@ -754,7 +754,13 @@ class PretrainedMultimodalTransformer(torch.nn.Module):
     ):
 
         super().__init__()
-        width = decoder.config.d_model
+        print(decoder.config)
+        if hasattr(decoder.config, "d_model"):
+            width = decoder.config.d_model
+        elif hasattr(decoder.config, "n_embd"):
+            width = decoder.config.n_embd
+        else:
+            raise ValueError("cannot find model width")
         self.width = width
         self.ln_final = norm_layer(width)
         output_dim = decoder.config.vocab_size
