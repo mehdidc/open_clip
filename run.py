@@ -1,7 +1,7 @@
 
 from clize import run
 from subprocess import call
-
+from copy import deepcopy
 
 base= {
     "gpus": 16,
@@ -17,13 +17,12 @@ base= {
     "epochs": 1,
     "workers": 8,
     "model": "coca_encoder-mt5-xxl_decoder-scratch_vis-ViT-BigG-14",
-    "name": "exp1",
     "logs": "logs/mt5",
     "seed": 0,
     "ddp-static-graph": True,
     "local-loss": True,
     "gather-with-grad": True,
-    "lr": 0.001,
+    "lr": 0.0001,
     "log-every-n-steps": 1,
     "save-most-recent": True,
     "resume": "latest",
@@ -44,7 +43,14 @@ base= {
 def exp1():
     return base
 
-exps = [exp1]
+def exp2():
+    exp = deepcopy(base)
+    exp['model'] = "coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14"
+    exp['lock-text-decoder'] = True
+    exp['batch-size'] = 128
+    return exp
+
+exps = [exp1, exp2]
 
 def main(name):
     params  = None
@@ -62,4 +68,4 @@ def main(name):
 
 
 if __name__ == "__main__":
-    run(main)
+    run(main)   
