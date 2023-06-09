@@ -52,7 +52,7 @@ def exp2():
 
 exps = [exp1, exp2]
 
-def main(name):
+def main(name, *, per_node=4):
     params  = None
     for exp in exps:
         if exp.__name__ == name:
@@ -60,7 +60,7 @@ def main(name):
             params['name'] = name
     
     if params is not None:
-        nodes = params['gpus'] // 4 
+        nodes = params['gpus'] // per_node
         params = [f"--{k} {v}" if type(v) != bool else f"--{k}" for k, v in params.items() if k != "gpus"]
         params = " ".join(params)
         print(params)
