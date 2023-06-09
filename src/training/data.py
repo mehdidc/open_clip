@@ -83,7 +83,10 @@ def expand_urls(urls, weights=None):
         weights = [float(weight) for weight in weights]
         all_urls, all_weights = [], []
         for url, weight in zip(urllist, weights):
-            expanded_url = list(braceexpand.braceexpand(url))
+            if os.path.exists(url):
+                expanded_url = [u.strip() for u in open(url).readlines()]
+            else:
+                expanded_url = list(braceexpand.braceexpand(url))
             expanded_weights = [weight for _ in expanded_url]
             all_urls.extend(expanded_url)
             all_weights.extend(expanded_weights)
