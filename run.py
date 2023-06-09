@@ -17,6 +17,7 @@ base= {
     "epochs": 1,
     "workers": 8,
     "model": "coca_encoder-mt5-xxl_decoder-scratch_vis-ViT-BigG-14",
+    "pretrained": "pretrained/coca_encoder-mt5-xxl_decoder-scratch_vis-ViT-BigG-14.pt",
     "logs": "logs/mt5",
     "seed": 0,
     "ddp-static-graph": True,
@@ -47,7 +48,8 @@ def exp2():
     exp = deepcopy(base)
     exp['model'] = "coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14"
     exp['lock-text-decoder'] = True
-    exp['batch-size'] = 128
+    exp['batch-size'] = 92
+    exp['pretrained'] = 'pretrained/coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14.pt'
     return exp
 
 exps = [exp1, exp2]
