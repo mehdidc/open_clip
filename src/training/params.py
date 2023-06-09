@@ -423,11 +423,25 @@ def parse_args(args):
         help="Lock full text tower by disabling gradients.",
     )
     parser.add_argument(
+        "--lock-text-decoder",
+        default=False,
+        action='store_true',
+        help="Lock full text tower by disabling gradients.",
+    )
+
+    parser.add_argument(
         "--lock-text-unlocked-layers",
         type=int,
         default=0,
         help="Leave last n image tower layer groups unlocked.",
     )
+    parser.add_argument(
+        "--lock-text-decoder-unlocked-layers",
+        type=int,
+        default=0,
+        help="Leave last n image tower layer groups unlocked.",
+    )
+
     parser.add_argument(
         "--lock-text-freeze-layer-norm",
         default=False,

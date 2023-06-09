@@ -15,6 +15,7 @@ from .transformer import (
     ProjMultimodalTransformer,
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+from .hf_configs import arch_dict
 
 try:
     from transformers import (
@@ -157,6 +158,23 @@ class CoCa(nn.Module):
     def lock_text_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
         self.text.lock(unlocked_layers, freeze_layer_norm)
     
+    def lock_text_decoder_tower(self, unlocked_layers: int = 0, freeze_layer_norm: bool = True):
+        decoder = self.text_decoder.decoder
+
+        if not unlocked_layers:  # full freezing
+            for n, p in decoder.named_parameters():
+                p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
+            return
+        layer_list = getattr(decoder, arch_dict[decoder.config.model_type]["config_names"]["layer_attr"])
+        print(f"Unlocking {unlocked_layers}/{len(layer_list) + 1} layers of hf model text decoder")
+        embeddings = getattr(
+            decoder, arch_dict[decoder.config.model_type]["config_names"]["token_embeddings_attr"])
+        modules = [embeddings, *layer_list][:-unlocked_layers]
+        # freeze layers
+        for module in modules:
+            for n, p in module.named_parameters():
+                p.requires_grad = (not freeze_layer_norm) if "LayerNorm" in n.split(".") else False
+
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.visual.set_grad_checkpointing(enable)

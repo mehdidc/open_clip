@@ -19,7 +19,7 @@ major, minor, *rest = torch.__version__.split(".")
 if (int(major), int(minor)) >= (2, 1):
     # FSDP is only supported for torch >= 2.1
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, CPUOffload, MixedPrecision
-    from torch.distributed.fsdp.api  import StateDictType, FullStateDictConfig, FullOptimStateDictConfig
+    from torch.distributed.fsdp.api  import StateDictType, FullStateDictConfig, FullOptimStateDictConfig, ShardingStrategy
     from torch.distributed.fsdp.wrap import ModuleWrapPolicy
     from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
     from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
@@ -275,7 +275,10 @@ def main(args):
             model.lock_text_tower(
                 unlocked_layers=args.lock_text_unlocked_layers,
                 freeze_layer_norm=args.lock_text_freeze_layer_norm)
-
+        if args.lock_text_decoder:
+            model.lock_text_decoder_tower(
+                unlocked_layers=args.lock_text_decoder_unlocked_layers,
+                freeze_layer_norm=args.lock_text_freeze_layer_norm)
         if args.grad_checkpointing:
             model.set_grad_checkpointing()
 
@@ -325,6 +328,7 @@ def main(args):
                 use_orig_params=True,
                 sync_module_states=True,
                 device_id=device,
+                #sharding_strategy=ShardingStrategy.HYBRID_SHARD,
             )
             if args.lock_image:
                 model.lock_image_tower(
@@ -333,6 +337,10 @@ def main(args):
             if args.lock_text:
                 model.lock_text_tower(
                     unlocked_layers=args.lock_text_unlocked_layers,
+                    freeze_layer_norm=args.lock_text_freeze_layer_norm)
+            if args.lock_text_decoder:
+                model.lock_text_decoder_tower(
+                    unlocked_layers=args.lock_text_decoder_unlocked_layers,
                     freeze_layer_norm=args.lock_text_freeze_layer_norm)
             model = FSDP(model, **wrapper_kwargs)
             if is_master(args):
