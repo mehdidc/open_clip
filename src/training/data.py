@@ -73,6 +73,9 @@ class DataInfo:
 
 
 def expand_urls(urls, weights=None):
+    if os.path.exists(urls):
+        expanded_urls = [u.strip() for u in open(urls).readlines()]
+        return expanded_urls, None
     if weights is None:
         expanded_urls = wds.shardlists.expand_urls(urls)
         return expanded_urls, None
@@ -83,10 +86,8 @@ def expand_urls(urls, weights=None):
         weights = [float(weight) for weight in weights]
         all_urls, all_weights = [], []
         for url, weight in zip(urllist, weights):
-            if os.path.exists(url):
-                expanded_url = [u.strip() for u in open(url).readlines()]
-            else:
-                expanded_url = list(braceexpand.braceexpand(url))
+            expanded_url = list(braceexpand.braceexpand(url))
+            print("EXPANDED", expanded_url)
             expanded_weights = [weight for _ in expanded_url]
             all_urls.extend(expanded_url)
             all_weights.extend(expanded_weights)
@@ -291,6 +292,7 @@ class ResampledShards2(IterableDataset):
         :param urls: a list of URLs as a Python list or brace notation string
         """
         super().__init__()
+
         urls, weights = expand_urls(urls, weights)
         self.urls = urls
         self.weights = weights
