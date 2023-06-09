@@ -405,6 +405,13 @@ def parse_args(args):
         help="FSDP floating point precision for gradient reduction"
     )
     parser.add_argument(
+        "--fsdp-sharding-strategy",
+        choices=["full", "hybrid"],
+        default="full",
+        help="FSDP strategy"
+    )
+
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",

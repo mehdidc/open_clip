@@ -319,7 +319,10 @@ def main(args):
 
             if is_master(args):
                 logging.info(f"FSDP Wrapped layers: {layers}")
-
+            strategy = {
+                "full": ShardingStrategy.FULL_SHARD,
+                "hybrid": ShardingStrategy.HYBRID_SHARD,
+            }[args.fsdp_sharding_strategy]
             wrapper_kwargs = dict(
                 mixed_precision=mixed_precision,
                 limit_all_gathers=args.fsdp_limit_allgathers,
@@ -328,7 +331,7 @@ def main(args):
                 use_orig_params=True,
                 sync_module_states=True,
                 device_id=device,
-                #sharding_strategy=ShardingStrategy.HYBRID_SHARD,
+                sharding_strategy=strategy,
             )
             if args.lock_image:
                 model.lock_image_tower(
