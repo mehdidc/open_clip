@@ -747,11 +747,11 @@ class MultimodalTransformer(Transformer):
 
 class PretrainedMultimodalTransformer(torch.nn.Module):
     def __init__(
-            self,
-            decoder,
-            norm_layer=LayerNorm,
-            hidden_image=1664,
-            hidden_text=4096,
+        self,
+        decoder,
+        norm_layer=LayerNorm,
+        hidden_image=1664,
+        hidden_text=4096,
     ):
 
         super().__init__()
