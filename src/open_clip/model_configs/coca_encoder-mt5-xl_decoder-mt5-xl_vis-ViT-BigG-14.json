@@ -1,0 +1,28 @@
+{
+    "embed_dim": 1280,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 48,
+        "width": 1664,
+        "head_width": 104,
+        "mlp_ratio": 4.9231,
+        "patch_size": 14,
+        "attn_pooler_heads": 8,
+        "output_tokens": true
+    },
+    "text_cfg": {
+        "hf_model_name": "google/mt5-xl",
+        "hf_tokenizer_name": "google/mt5-xl",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler",
+        "output_tokens": true,
+        "force_causal": true,
+        "vocab_size": 250100
+    },
+    "multimodal_cfg": {
+        "pretrained": "google/mt5-xl",
+        "hidden_image": 1664,
+        "hidden_text": 4096
+    },
+    "custom_text": true
+}
