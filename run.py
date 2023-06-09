@@ -50,6 +50,7 @@ def exp2():
     exp['lock-text-decoder'] = True
     exp['batch-size'] = 92
     exp['pretrained'] = 'pretrained/coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14.pt'
+    exp["gpus"] = 512
     return exp
 
 exps = [exp1, exp2]
@@ -70,4 +71,4 @@ def main(name, *, per_node=4):
 
 
 if __name__ == "__main__":
-    run(main)   
+    run(main)
