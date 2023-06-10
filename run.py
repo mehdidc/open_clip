@@ -4,7 +4,7 @@ from subprocess import call
 from copy import deepcopy
 
 base= {
-    "gpus": 16,
+    "gpus": 1024,
     "save-frequency": 1,
     "zeroshot-frequency": 1,
     "dataset-type": "webdataset",
@@ -37,23 +37,20 @@ base= {
     "lock-image": True,
     "lock-image-unlocked-groups": 13,
     "force-patch-dropout": 0.5,
-    "precision": "amp_bfloat16"
+    "precision": "amp_bfloat16",
+    "fsdp-sharding-strategy": "full",
 }
 
-
 def exp1():
-    return base
-
-def exp2():
     exp = deepcopy(base)
     exp['model'] = "coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14"
     exp['lock-text-decoder'] = True
     exp['batch-size'] = 92
     exp['pretrained'] = 'pretrained/coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14.pt'
-    exp["gpus"] = 512
+    exp["gpus"] = 1024
     return exp
 
-exps = [exp1, exp2]
+exps = [exp1]
 
 def main(name, *, per_node=4):
     params  = None
