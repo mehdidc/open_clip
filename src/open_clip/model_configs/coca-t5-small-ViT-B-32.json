@@ -18,13 +18,7 @@
         "vocab_size": 250100
     },
     "multimodal_cfg": {
-        "context_length": 77,
-        "vocab_size": 250100,
-        "width": 768,
-        "heads": 16,
-        "layers": 1,
-        "attn_pooler_heads": 8,
-        "proj": true,
+        "pretrained": "t5-small",
         "hidden_image": 768,
         "hidden_text": 512
 
