@@ -43,12 +43,18 @@ base= {
 
 def exp1():
     exp = deepcopy(base)
-    exp['model'] = "coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14"
-    exp['lock-text-decoder'] = True
-    exp['batch-size'] = 92
-    exp['pretrained'] = 'pretrained/coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14.pt'
-    exp["gpus"] = 1024
+    exp['model'] = "coca_encoder-mt5-xxl_decoder-scratch_vis-ViT-BigG-14"
+    exp['pretrained'] = "pretrained/coca_encoder-mt5-xxl_decoder-scratch_vis-ViT-BigG-14.pt"
+    exp['batch-size'] = 64
+    exp["gpus"] = 128
+    exp["lock-text-unlocked-layers"] = 6
+    exp["lock-image-unlocked-groups"] = 6
+    exp["train-num-samples"] =  10_000_000
+    exp["epochs"] =  1  
+    exp["warmup"] =  500
+    exp["lr"] =  0.0005
     return exp
+
 
 exps = [exp1]
 
