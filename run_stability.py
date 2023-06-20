@@ -37,7 +37,7 @@ base= {
     "force-patch-dropout": 0.5,
     "precision": "amp_bfloat16",
     "resume": "latest",
-    "fsdp-sharding-strategy": "hybrid",
+    # "fsdp-sharding-strategy": "hybrid",
 }
 
 def exp1():
@@ -141,6 +141,12 @@ def exp13():
     exp = exp12()
     exp["beta2"] = 0.95
     exp["grad-clip-norm"] = 1
+    return exp
+
+def exp14():
+    exp = exp12()
+    exp["gpus"] = 64
+    exp["epochs"] = 2
     return exp
 
 exps = [v for k, v in vars().items() if k.startswith("exp")]

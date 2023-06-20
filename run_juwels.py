@@ -1,4 +1,4 @@
-
+import os
 from clize import run
 from subprocess import call
 from copy import deepcopy
@@ -38,7 +38,6 @@ base= {
     "lock-image-unlocked-groups": 13,
     "force-patch-dropout": 0.5,
     "precision": "amp_bfloat16",
-    "fsdp-sharding-strategy": "full",
 }
 
 def exp1():
@@ -55,22 +54,89 @@ def exp1():
     exp["lr"] =  0.0005
     return exp
 
+def exp2():
+    exp = exp1()
+    exp["lr"] =  0.001
+    return exp
 
-exps = [exp1]
+def exp3():
+    exp = exp1()
+    exp["lr"] =  0.0001
+    return exp
+
+def exp4():
+    exp = exp1()
+    exp['model'] = "coca_encoder-mt5-xxl_decoder-mt5-base_vis-ViT-BigG-14"
+    exp['pretrained'] = "pretrained/coca_encoder-mt5-xxl_decoder-mt5-base_vis-ViT-BigG-14.pt"
+    return exp
+
+def exp5():
+    exp = exp4()
+    exp["lr"] =  0.0002
+    return exp
+
+def exp6():
+    exp = exp1()
+    exp["train-num-samples"] =  20_000_000
+    return exp
+
+def exp7():
+    exp = exp1()
+    return exp
+
+def exp8():
+    exps = []
+    for li, lt in ( (0, 6), (0, 12), (7, 6), (13, 12) ):
+        exp = exp1()
+        exp["epochs"] = 100
+        exp["lock-text-unlocked-layers"] = lt
+        exp["lock-image-unlocked-groups"] = li
+        exp["lr"] =  0.0005
+        name = f"li-{li}_lt-{lt}"
+        exp["name"] = name
+        exps.append(exp)
+    return exps
+
+def exp9():
+    exps = []
+    for li, lt in ( (0, 6), (0, 12), (7, 6), (13, 12) ):
+        exp = exp1()
+        exp["epochs"] = 100
+        exp["lock-text-unlocked-layers"] = lt
+        exp["lock-image-unlocked-groups"] = li
+        exp['model'] = "coca_encoder-mt5-xxl_decoder-mt5-base_vis-ViT-BigG-14"
+        exp['pretrained'] = "pretrained/coca_encoder-mt5-xxl_decoder-mt5-base_vis-ViT-BigG-14.pt"
+        exp["lr"] =  0.0005
+        name = f"li-{li}_lt-{lt}"
+        exp["name"] = name
+        exps.append(exp)
+    return exps
+
+
+exps = [v for k, v in vars().items() if k.startswith("exp")]
 
 def main(name, *, per_node=4):
-    params  = None
+    all_params  = None
     for exp in exps:
         if exp.__name__ == name:
             params = exp()
-            params['name'] = name
+            if type(params) == list:
+                all_params = [p for p in params]
+                for p in all_params:
+                    p["logs"] = os.path.join(p["logs"], name)
+                    os.makedirs(p["logs"], exist_ok=True)
+            else:
+                params['name'] = name
+                all_params = [params]
+            break
     
-    if params is not None:
-        nodes = params['gpus'] // per_node
-        params = [f"--{k} {v}" if type(v) != bool else f"--{k}" for k, v in params.items() if k != "gpus"]
-        params = " ".join(params)
-        print(params)
-        call(f"sbatch  -N {nodes} template.sbatch {params}", shell=True)
+    if all_params is not None:
+        for params in all_params:
+            nodes = params['gpus'] // per_node
+            params = [f"--{k} {v}" if type(v) != bool else f"--{k}" for k, v in params.items() if k != "gpus"]
+            params = " ".join(params)
+            print(params)
+            call(f"sbatch  -N {nodes} template.sbatch {params}", shell=True)
 
 
 if __name__ == "__main__":
