@@ -357,7 +357,24 @@ def parse_args(args):
         help="Initialize the model on CPUs rather than GPUs, useful for large models",
     )
     parser.add_argument(
+        "--fsdp-sharded-state-dict",
+        default=False,
+        action="store_true",
+        help="Initialize the model on CPUs rather than GPUs, useful for large models",
+    )
+    parser.add_argument(
+        "--fsdp-sharded-state-dict-type",
+        default="local",
+        help="Initialize the model on CPUs rather than GPUs, useful for large models",
+    ) 
+    parser.add_argument(
         "--fsdp-cpu-offload",
+        default=False,
+        action="store_true",
+        help="Use CPU offloading",
+    )
+    parser.add_argument(
+        "--fsdp-only-save-full-checkpoint",
         default=False,
         action="store_true",
         help="Use CPU offloading",
