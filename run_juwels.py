@@ -82,6 +82,9 @@ def exp6():
 
 def exp7():
     exp = exp1()
+    exp['model'] = "coca_encoder-mt5-xxl_decoder-mt5-base_vis-ViT-BigG-14"
+    exp['pretrained'] = "pretrained/coca_encoder-mt5-xxl_decoder-mt5-base_vis-ViT-BigG-14.pt"
+    exp["train-num-samples"] =  20_000_000
     return exp
 
 def exp8():
@@ -112,6 +115,38 @@ def exp9():
         exps.append(exp)
     return exps
 
+def exp10():
+    exp = exp1()
+    exp["lock-text-unlocked-layers"] = 6
+    exp["lock-image-unlocked-groups"] = 7
+    exp["lr"] =  0.0005
+    exp["gpus"] = 512 
+    exp["warmup"] = 2000 
+    exp["train-num-samples"] =  50_000_000
+    exp["epochs"] = 20
+    return exp
+
+def exp11():
+    exp = exp10()
+    exp["gpus"] = 96
+    exp["train-num-samples"] =  100000
+    exp['batch-size'] = 32
+    exp['dataset-type'] = 'synthetic'
+    exp['workers'] = 0
+    exp['fsdp-sharded-state-dict'] = True
+    return exp
+
+def exp12():
+    exp = exp1()
+    exp["lock-text-unlocked-layers"] = 6
+    exp["lock-image-unlocked-groups"] = 7
+    exp["lr"] =  0.0005
+    exp["gpus"] = 512 
+    exp["warmup"] = 2000 
+    exp["train-num-samples"] =  50_000_000
+    exp["epochs"] = 20
+    exp['fsdp-sharded-state-dict'] = True
+    return exp
 
 exps = [v for k, v in vars().items() if k.startswith("exp")]
 

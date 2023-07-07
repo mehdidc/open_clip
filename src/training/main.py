@@ -581,17 +581,17 @@ def main(args):
                 logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     if args.fsdp_only_save_full_checkpoint:
-        FSDP.set_state_dict_type(
-                model,
-                StateDictType.FULL_STATE_DICT,
-                FullStateDictConfig(rank0_only=False, offload_to_cpu=True),
-                FullOptimStateDictConfig(rank0_only=False, offload_to_cpu=True),
-        )
-        checkpoint = {
-            "state_dict": model.state_dict(),
-            "name": args.name
-        }   
-        torch.save(checkpoint, os.path.join(args.resume, f"full.pt"))
+     
+        with FSDP.summon_full_params(model, offload_to_cpu=True):
+            print("CKPT")
+            checkpoint = {
+                "state_dict": model.state_dict(),
+                "name": args.name
+            }
+            if args.rank == 0:   
+                torch.save(checkpoint, os.path.join(args.resume, f"full.pt"))
+                print("SAVED", args.resume)
+        torch.distributed.barrier()
         sys.exit(0)
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
     assert len(data), 'At least one train or eval dataset must be specified.'
