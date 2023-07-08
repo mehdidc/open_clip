@@ -146,6 +146,7 @@ def exp12():
     exp["train-num-samples"] =  50_000_000
     exp["epochs"] = 20
     exp['fsdp-sharded-state-dict'] = True
+    exp['fsdp-sharded-state-dict-type'] = 'sharded'
     return exp
 
 exps = [v for k, v in vars().items() if k.startswith("exp")]
