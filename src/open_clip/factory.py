@@ -40,7 +40,6 @@ def _rescan_model_configs():
         elif config_path.is_dir():
             for ext in config_ext:
                 config_files.extend(config_path.glob(f'*{ext}'))
-
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
