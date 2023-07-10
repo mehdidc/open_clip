@@ -149,6 +149,11 @@ def exp12():
     exp['fsdp-sharded-state-dict-type'] = 'sharded'
     return exp
 
+def exp13():
+    exp = exp12()
+    exp["warmup"] = 5000 
+    return exp
+
 exps = [v for k, v in vars().items() if k.startswith("exp")]
 
 def main(name, *, per_node=4):
