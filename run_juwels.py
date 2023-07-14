@@ -141,12 +141,13 @@ def exp12():
     exp["lock-text-unlocked-layers"] = 6
     exp["lock-image-unlocked-groups"] = 7
     exp["lr"] =  0.0005
-    exp["gpus"] = 512 
+    exp["gpus"] = 512
     exp["warmup"] = 2000 
     exp["train-num-samples"] =  50_000_000
     exp["epochs"] = 20
     exp['fsdp-sharded-state-dict'] = True
     exp['fsdp-sharded-state-dict-type'] = 'sharded'
+    exp['wd'] = 0.
     return exp
 
 def exp13():
@@ -154,9 +155,37 @@ def exp13():
     exp["warmup"] = 5000 
     return exp
 
+def exp13_eval():
+    exp = exp13()
+    exp["fsdp-only-save-full-checkpoint"] = True
+    exp["time_minutes"] = 15
+    exp['name'] = 'exp13'
+    return exp
+
+def exp14():
+    exp = exp13()
+    exp['gpus'] = 512
+    exp["time_minutes"] = 144 * 2 # 2 epochs
+    exp['model'] = "coca_encoder-mt5-large_decoder-scratch_vis-ViT-BigG-14"
+    exp['pretrained'] = "pretrained/coca_encoder-mt5-large_decoder-scratch_vis-ViT-BigG-14.pt"
+    exp['lock-text'] = False
+    exp['lock-image'] = True
+    exp["lock-image-unlocked-groups"] = 0
+    exp["lock-text-unlocked-layers"] = 0
+    exp['batch-size'] = 96
+    exp['warmup'] = 5000
+    exp['force-patch-dropout'] = 0
+    exp['fsdp-sharded-state-dict'] = True
+    exp["train-num-samples"] =  50_000_000
+    exp['fsdp-sharding-strategy'] = 'full'
+    exp["epochs"] = 20
+    return exp
+
+
+
 exps = [v for k, v in vars().items() if k.startswith("exp")]
 
-def main(name, *, per_node=4):
+def main(name, *, resume='', per_node=4):
     all_params  = None
     for exp in exps:
         if exp.__name__ == name:
@@ -167,17 +196,22 @@ def main(name, *, per_node=4):
                     p["logs"] = os.path.join(p["logs"], name)
                     os.makedirs(p["logs"], exist_ok=True)
             else:
-                params['name'] = name
+                if 'name' not in params:
+                    params['name'] = name
                 all_params = [params]
             break
     
     if all_params is not None:
         for params in all_params:
             nodes = params['gpus'] // per_node
-            params = [f"--{k} {v}" if type(v) != bool else f"--{k}" for k, v in params.items() if k != "gpus"]
+            time_minutes = params.get("time_minutes")
+            if resume:
+                params['resume'] = resume
+            params = [f"--{k} {v}" if type(v) != bool else (f"--{k}" if v else "") for k, v in params.items() if k not in ("gpus", "time_minutes")]
             params = " ".join(params)
             print(params)
-            call(f"sbatch  -N {nodes} template.sbatch {params}", shell=True)
+            duration = f"-t {time_minutes}" if time_minutes else ""
+            call(f"sbatch  -N {nodes} {duration} template.sbatch {params}", shell=True)
 
 
 if __name__ == "__main__":
