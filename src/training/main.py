@@ -197,7 +197,7 @@ def main(args):
         os.makedirs(log_base_path, exist_ok=True)
         log_filename = f'out-{args.rank}' if args.log_local else 'out.log'
         args.log_path = os.path.join(log_base_path, log_filename)
-        if os.path.exists(args.log_path) and not resume_latest:
+        if os.path.exists(args.log_path) and not resume_latest and not args.fsdp_only_save_full_checkpoint:
             print(
                 "Error. Experiment already exists. Use --name {} to specify a new experiment."
             )
@@ -581,15 +581,39 @@ def main(args):
                 logging.info(f"=> loaded checkpoint '{args.resume}' (epoch {start_epoch})")
 
     if args.fsdp_only_save_full_checkpoint:
+        """
+        from clip_benchmark.datasets.builder import build_dataset
+        from clip_benchmark.metrics import zeroshot_classification
+        ds = build_dataset(
+            dataset_name="wds/imagenet1k", 
+            root="/p/fastdata/mmlaion/vtab_plus_wds/wds_imagenet1k", 
+            transform=preprocess_val, 
+        )
+        dl = torch.utils.data.DataLoader(
+            ds.batched(64), 
+            batch_size=None, 
+            shuffle=False, num_workers=4,
+        )
+        zeroshot_templates = ds.templates
+        classnames = ds.classes
+        with torch.no_grad():
+            metrics = zeroshot_classification.evaluate(
+                model, 
+                dl, 
+                get_tokenizer(args.model), 
+                classnames, zeroshot_templates, 
+                device="cuda", 
+                amp=True,
+            )
+        print(metrics)
+        """
+
         FSDP.set_state_dict_type(
                 model,
                 StateDictType.FULL_STATE_DICT,
                 FullStateDictConfig(rank0_only=False, offload_to_cpu=True),
                 FullOptimStateDictConfig(rank0_only=False, offload_to_cpu=True),
         )
-        #with FSDP.summon_full_params(model, offload_to_cpu=True):
-        
-        print("CKPT")
         sd = model.state_dict()
         checkpoint = {
             "state_dict": sd,
@@ -597,7 +621,6 @@ def main(args):
         }
         if args.rank == 0:   
             torch.save(checkpoint, os.path.join(args.resume, f"full.pt"))
-            print("SAVED", args.resume)
         torch.distributed.barrier()
         sys.exit(0)
     data = get_data(args, (preprocess_train, preprocess_val), epoch=start_epoch, tokenizer=get_tokenizer(args.model))
@@ -689,7 +712,7 @@ def main(args):
                 "epoch": completed_epoch,
                 "name": args.name,
                 "state_dict": model.state_dict(),
-                #"optimizer": FSDP.optim_state_dict(model, optimizer) if args.fsdp else optimizer.state_dict(),
+                "optimizer": FSDP.optim_state_dict(model, optimizer) if (args.fsdp and not args.fsdp_sharded_state_dict) else optimizer.state_dict(),
                 "optimizer": optimizer.state_dict(),
 
             }
@@ -760,7 +783,7 @@ def main(args):
 def copy_codebase(args):
     from shutil import copytree, ignore_patterns
     new_code_path = os.path.join(args.logs, args.name, "code")
-    if os.path.exists(new_code_path):
+    if os.path.exists(new_code_path) and not args.fsdp_only_save_full_checkpoint:
         print(
             f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
         )
