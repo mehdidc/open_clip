@@ -181,6 +181,12 @@ def exp14():
     exp["epochs"] = 20
     return exp
 
+def exp14_eval():
+    exp = exp14()
+    exp["fsdp-only-save-full-checkpoint"] = True
+    exp["time_minutes"] = 15
+    exp['name'] = 'exp14'
+    return exp
 
 
 exps = [v for k, v in vars().items() if k.startswith("exp")]
