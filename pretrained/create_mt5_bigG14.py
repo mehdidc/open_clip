@@ -5,7 +5,7 @@ import open_clip
 models = [
     # "mt5-xxl-ViT-BigG-14",
     # "coca_encoder-mt5-xxl_decoder-scratch_vis-ViT-BigG-14",
-    "coca_encoder-mt5-large_decoder-scratch_vis-ViT-BigG-14",
+    # "coca_encoder-mt5-large_decoder-scratch_vis-ViT-BigG-14",
     # "coca_encoder-mt5-xxl_decoder-mt5-xxl_vis-ViT-BigG-14",
     # "coca_encoder-mt5-xxl_decoder-mt5-xl_vis-ViT-BigG-14",
     # "coca_encoder-mt5-xxl_decoder-mt5-large_vis-ViT-BigG-14",
