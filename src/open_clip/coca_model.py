@@ -139,13 +139,16 @@ class CoCa(nn.Module):
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
-
+    
+        kw = {}
+        if hasattr(self.text, 'cache'):
+            kw['encoder_decoder'] = self.text.cache.get("encoder_decoder")
         self.text_decoder = _build_text_decoder_tower(
             vocab_size,
             multimodal_cfg=multimodal_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
-            encoder_decoder=self.text.cache.get("encoder_decoder"),
+            **kw
         )
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
