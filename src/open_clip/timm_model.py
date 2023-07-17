@@ -50,6 +50,7 @@ class TimmModel(nn.Module):
         timm_kwargs = {}
         if drop_path is not None:
             timm_kwargs['drop_path_rate'] = drop_path
+        timm_kwargs['img_size'] = image_size
         self.trunk = timm.create_model(model_name, pretrained=pretrained, **timm_kwargs)
         feat_size = self.trunk.default_cfg.get('pool_size', None)
         feature_ndim = 1 if not feat_size else 2

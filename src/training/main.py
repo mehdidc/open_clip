@@ -422,7 +422,7 @@ def main(args):
                     unlocked_layers=args.lock_text_decoder_unlocked_layers,
                     freeze_layer_norm=args.lock_text_freeze_layer_norm)
             print(model.logit_scale.shape)
-            if args.fsdp_sharded_state_dict:
+            if args.fsdp and args.fsdp_sharded_state_dict:
                 model.logit_scale = torch.nn.Parameter(torch.Tensor([model.logit_scale.item()]))
             model = FSDP(model, **wrapper_kwargs)
             if is_master(args):
