@@ -1,0 +1,18 @@
+{
+    "embed_dim": 1024,
+    "vision_cfg": {
+        "timm_model_name": "vit_large_patch14_dinov2.lvd142m",
+        "timm_model_pretrained": true,
+        "timm_pool": "",
+        "timm_proj": "linear",
+        "timm_drop": 0.0,
+        "image_size": 224
+    },
+    "text_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 512,
+        "heads": 8,
+        "layers": 12
+    }
+}

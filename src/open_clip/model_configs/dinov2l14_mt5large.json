@@ -1,0 +1,20 @@
+{
+    "embed_dim": 1024,
+    "vision_cfg": {
+        "timm_model_name": "vit_large_patch14_dinov2.lvd142m",
+        "timm_model_pretrained": true,
+        "timm_pool": "",
+        "timm_proj": "linear",
+        "timm_drop": 0.0,
+        "image_size": 224
+    },
+    "text_cfg": {
+        "hf_model_name": "google/mt5-large",
+        "hf_tokenizer_name": "google/mt5-large",
+        "proj": "mlp",
+        "pooler_type": "mean_pooler",
+        "force_causal": true,
+        "vocab_size": 250100
+    },
+    "custom_text": true
+}
