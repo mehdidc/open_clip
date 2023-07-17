@@ -188,10 +188,27 @@ def exp14_eval():
     exp['name'] = 'exp14'
     return exp
 
+def exp15():
+    exp = exp14()
+    exp['model'] = "dinov2l14_mt5xl"
+    del exp["pretrained"]
+    exp['batch-size'] = 768
+    exp['wd'] = 0
+    exp['gpus'] = 128
+    exp['time_minutes'] = 60*4
+    exp["train-num-samples"] =  100_000_000
+    exp["epochs"] = 10
+    exp['lock-text'] = False
+    exp['lock-image'] = True
+    exp['force-patch-dropout'] = 0
+    exp['image-mean'] = '0.4850 0.4560 0.4060'
+    exp['image-std'] = '0.2290 0.2240 0.2250'
+    return exp
+
 
 exps = [v for k, v in vars().items() if k.startswith("exp")]
 
-def main(name, *, resume='', per_node=4):
+def main(name, *, resume='', partition='booster', per_node=4):
     all_params  = None
     for exp in exps:
         if exp.__name__ == name:
@@ -215,9 +232,9 @@ def main(name, *, resume='', per_node=4):
                 params['resume'] = resume
             params = [f"--{k} {v}" if type(v) != bool else (f"--{k}" if v else "") for k, v in params.items() if k not in ("gpus", "time_minutes")]
             params = " ".join(params)
-            print(params)
             duration = f"-t {time_minutes}" if time_minutes else ""
-            call(f"sbatch  -N {nodes} {duration} template.sbatch {params}", shell=True)
+            print(partition, duration)
+            call(f"sbatch  --partition {partition} -N {nodes} {duration} template.sbatch {params}", shell=True)
 
 
 if __name__ == "__main__":
