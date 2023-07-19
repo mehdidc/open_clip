@@ -161,12 +161,18 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             else:
                 if args.grad_clip_norm is not None:
                     scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
+                    if args.fsdp:
+                        model.clip_grad_norm_(args.grad_clip_norm, norm_type=2.0)
+                    else:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
                 scaler.step(optimizer)
             scaler.update()
         else:
             if args.grad_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
+                if args.fsdp:
+                    model.clip_grad_norm_(args.grad_clip_norm, norm_type=2.0)
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm, norm_type=2.0)
             optimizer.step()
 
         # reset gradient accum, if enabled
