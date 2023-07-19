@@ -311,7 +311,7 @@ def main(args):
         args.model,
         args.pretrained,
         precision=args.precision,
-        device='cpu' if args.fsdp_init_on_cpu else device,
+        device='cpu' if args.fsdp and args.fsdp_init_on_cpu else device,
         jit=args.torchscript,
         force_quick_gelu=args.force_quick_gelu,
         force_custom_text=args.force_custom_text,
@@ -713,8 +713,6 @@ def main(args):
                 "name": args.name,
                 "state_dict": model.state_dict(),
                 "optimizer": FSDP.optim_state_dict(model, optimizer) if (args.fsdp and not args.fsdp_sharded_state_dict) else optimizer.state_dict(),
-                "optimizer": optimizer.state_dict(),
-
             }
             if scaler is not None:
                 checkpoint_dict["scaler"] = scaler.state_dict()
