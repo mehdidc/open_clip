@@ -195,7 +195,7 @@ def exp15():
     exp['batch-size'] = 768
     exp['wd'] = 0
     exp['gpus'] = 128
-    exp['time_minutes'] = 60*4
+    exp['time_minutes'] = 60 * 6 + 15
     exp["train-num-samples"] =  100_000_000
     exp["epochs"] = 10
     exp['lock-text'] = False
@@ -205,10 +205,49 @@ def exp15():
     exp['image-std'] = '0.2290 0.2240 0.2250'
     return exp
 
+def exp15_eval():
+    exp = exp15()
+    exp["fsdp-only-save-full-checkpoint"] = True
+    exp["time_minutes"] = 15
+    exp['name'] = 'exp15'
+    return exp
+
+def exp16():
+    exp = exp15()
+    exp['model'] = "dinov2l14_mt5large"
+    exp['gpus'] = 96
+    exp["train-num-samples"] =  407332084
+    exp['batch-size'] = 896
+    exp["epochs"] = 6
+    exp["fsdp"] = False
+    exp["fsdp-init-on-cpu"] = False
+    exp["fsdp-sharded-state-dict"] = False
+    exp["time_minutes"] = 455
+    return exp
+
+def exp17():
+    exp = exp16()
+    exp['model'] = "dinov2l14_mt5xl"
+    exp["fsdp"] = True
+    exp["fsdp-init-on-cpu"] = True
+    exp["batch-size"] = 768
+    exp["gpus"] = 128
+    exp["train-num-samples"] =  407332084
+    exp["fsdp-sharded-state-dict"] = False
+    exp['fsdp-sharding-strategy'] = 'full'
+    exp["time_minutes"] = 60 * 13
+    return exp
+
+def exp18():
+    exp = exp17()
+    exp["grad-clip-norm"] = 1.0
+    exp["name"] = "exp17"
+    return exp
+
 
 exps = [v for k, v in vars().items() if k.startswith("exp")]
 
-def main(name, *, resume='', partition='booster', per_node=4):
+def main(name, *, resume='', partition='booster', per_node=4, account="laionize", time_minutes=""):
     all_params  = None
     for exp in exps:
         if exp.__name__ == name:
@@ -227,14 +266,15 @@ def main(name, *, resume='', partition='booster', per_node=4):
     if all_params is not None:
         for params in all_params:
             nodes = params['gpus'] // per_node
-            time_minutes = params.get("time_minutes")
+            if not time_minutes:
+                time_minutes = params.get("time_minutes")
             if resume:
                 params['resume'] = resume
             params = [f"--{k} {v}" if type(v) != bool else (f"--{k}" if v else "") for k, v in params.items() if k not in ("gpus", "time_minutes")]
             params = " ".join(params)
             duration = f"-t {time_minutes}" if time_minutes else ""
             print(partition, duration)
-            call(f"sbatch  --partition {partition} -N {nodes} {duration} template.sbatch {params}", shell=True)
+            call(f"sbatch --account {account} --partition {partition} -N {nodes} {duration} template.sbatch {params}", shell=True)
 
 
 if __name__ == "__main__":
