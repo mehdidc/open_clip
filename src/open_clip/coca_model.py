@@ -11,6 +11,7 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
+    MultimodalDecoder
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
@@ -55,6 +56,7 @@ def _build_text_decoder_tower(
         multimodal_cfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
+        causal=True,
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -71,10 +73,38 @@ def _build_text_decoder_tower(
         output_dim=embed_dim,
         act_layer=act_layer,
         norm_layer=norm_layer,
+        causal=causal,
     )
 
     return decoder
 
+def _build_cap_text_decoder_tower(
+        embed_dim,
+        multimodal_cfg,
+        quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None,
+        causal=True,
+):
+    multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = (
+        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+    )
+
+    decoder = MultimodalDecoder(
+        context_length=multimodal_cfg.context_length,
+        width=multimodal_cfg.width,
+        heads=multimodal_cfg.heads,
+        layers=multimodal_cfg.layers,
+        ls_init_value=multimodal_cfg.ls_init_value,
+        output_dim=embed_dim,
+        act_layer=act_layer,
+        norm_layer=norm_layer,
+        causal=causal,
+        vocab_size=multimodal_cfg.vocab_size,
+    )
+
+    return decoder
 
 class CoCa(nn.Module):
     def __init__(
@@ -88,6 +118,8 @@ class CoCa(nn.Module):
             init_logit_bias: Optional[float] = None,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
+            teacher_forcing: bool = False,
+            contrastive=True
     ):
         super().__init__()
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
@@ -113,14 +145,14 @@ class CoCa(nn.Module):
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
         )
-
         self.text_decoder = _build_text_decoder_tower(
             vocab_size,
             multimodal_cfg=multimodal_cfg,
             quick_gelu=quick_gelu,
             cast_dtype=cast_dtype,
+            causal=teacher_forcing,
         )
-
+      
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
         if init_logit_bias is not None:
             self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
@@ -129,6 +161,15 @@ class CoCa(nn.Module):
         self.pad_id = pad_id
 
         self.context_length = multimodal_cfg.context_length
+        self.teacher_forcing = teacher_forcing
+        
+        #visual.proj, text.ln_final.bias, text.ln_final.weight, text.text_projection, .logit_scale
+        if not contrastive:
+            self.visual.proj.requires_grad = False
+            self.text.ln_final.bias.requires_grad = False
+            self.text.ln_final.weight.requires_grad = False
+            self.text.text_projection.requires_grad = False
+            self.logit_scale.requires_grad = False
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True):
@@ -154,6 +195,33 @@ class CoCa(nn.Module):
         text_latent, _ = self._encode_text(text, normalize=normalize)
         return text_latent
 
+    @torch.no_grad()
+    def predict(self, image, max_text_len):
+        image_latent, image_embs = self._encode_image(image)
+        text_for_encoder = torch.zeros(image.shape[0], max_text_len).to(image.device).long()
+        text_latent, token_embs = self._encode_text(text_for_encoder)
+        logits = self.text_decoder(image_embs, token_embs)
+        return logits
+
+    @torch.no_grad()
+    def score(self, logits, texts):
+        # logits: (I, L, V)
+        # texts: (T, L)
+        I, L, V = logits.shape
+        T, L = texts.shape
+        logits = logits.view(I, 1, L, V)
+        texts = texts.view(1, T, L).repeat(I, 1, 1).view(I, T, L, 1)
+        lp = logits.log_softmax(dim=-1)
+        lp = lp.repeat(1, T, 1, 1)
+        lp = torch.gather(lp, 3, texts)
+        lp[texts == 0] = 0
+        ce = lp.sum(dim=(2,3))
+        #print(lp.shape)
+        #texts = torch.nn.functional.one_hot(texts, V).float()
+        #texts[:, :, :, 0] = 0
+        #ce = (lp * texts).sum(dim=(2,3))
+        return ce
+
     def forward(
             self,
             image,
@@ -166,12 +234,15 @@ class CoCa(nn.Module):
 
         if text is None:
             return {"image_features": image_latent, "image_embs": image_embs}
-
-        text_latent, token_embs = self._encode_text(text)
-
-        # TODO: add assertion to avoid bugs?
+        
+        if not self.teacher_forcing:
+            text_for_encoder = torch.zeros_like(text).to(text.device)
+        else:
+            text_for_encoder = text
+        text_latent, token_embs = self._encode_text(text_for_encoder)
         labels = text[:, -token_embs.shape[1]:]
 
+        # TODO: add assertion to avoid bugs?
         logits = self.text_decoder(image_embs, token_embs)
         out_dict = {
             "image_features": image_latent,
@@ -476,3 +547,93 @@ def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
         "position_ids": position_ids,
         "attention_mask": attention_mask,
     }
+
+
+class Cap(nn.Module):
+    def __init__(
+            self,
+            embed_dim,
+            multimodal_cfg: MultimodalCfg,
+            vision_cfg: CLIPVisionCfg,
+            quick_gelu: bool = False,
+            cast_dtype: Optional[torch.dtype] = None,
+            pad_id: int = 0,
+            causal_mask: bool = True,
+    ):
+        super().__init__()
+        multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+        vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
+        vocab_size = (
+            multimodal_cfg.vocab_size  # for hf models
+            if hasattr(multimodal_cfg, "hf_model_name") and multimodal_cfg.hf_model_name is not None
+            else multimodal_cfg.vocab_size
+        )
+
+        self.visual = _build_vision_tower(
+            embed_dim=embed_dim,
+            vision_cfg=vision_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype,
+        )
+        self.text_decoder = _build_cap_text_decoder_tower(
+            vocab_size,
+            multimodal_cfg=multimodal_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype,
+            causal=causal_mask,
+        )
+        self.pad_id = pad_id
+        self.context_length = multimodal_cfg.context_length
+        self.causal_mask = causal_mask
+        
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable: bool = True):
+        self.visual.set_grad_checkpointing(enable)
+        self.text_decoder.set_grad_checkpointing(enable)
+
+
+    def encode_image(self, image):
+        _, image_embs = self.visual(image)
+        return image_embs
+
+    @torch.no_grad()
+    def predict(self, image=None, max_text_len=None, text=None, image_embs=None):
+        if image_embs is None:
+            _, image_embs = self.visual(image)
+        if text is None:
+            text = torch.empty(image_embs.shape[0], max_text_len).to(image_embs.device).long()
+            text.fill_(self.pad_id)
+        logits = self.text_decoder(image_embs, text)
+        return logits
+
+    @torch.no_grad()
+    def score(self, logits, texts):
+        # logits: (I, L, V)
+        # texts: (T, L)
+        I, L, V = logits.shape
+        T, L = texts.shape
+        logits = logits.view(I, 1, L, V)
+        texts = texts.view(1, T, L).repeat(I, 1, 1).view(I, T, L, 1)
+        lp = logits.log_softmax(dim=-1)
+        lp = lp.repeat(1, T, 1, 1)
+        lp = torch.gather(lp, 3, texts)
+        lp[texts == 0] = 0
+        ce = lp.sum(dim=(2,3))
+        return ce
+
+    def forward(self, image, text, text_mask=None):
+        _, image_embs = self.visual(image)
+        if text_mask is None:
+            text_input = text
+        else:
+            text_input = text.masked_fill(text_mask, self.pad_id)
+        
+        if self.causal_mask:
+            text_input = text_input[:, :-1]
+            labels = text[:, 1:]
+        logits = self.text_decoder(image_embs, text_input)
+        out_dict = {
+            "logits": logits,
+            "labels": text,
+        }
+        return out_dict

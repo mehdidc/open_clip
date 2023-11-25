@@ -52,7 +52,7 @@ class CLIPVisionCfg:
     timm_proj_bias: bool = False  # enable bias final projection
     timm_drop: float = 0.  # head dropout
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
-
+    pool:bool = True
 
 @dataclass
 class CLIPTextCfg:

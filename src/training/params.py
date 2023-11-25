@@ -452,6 +452,18 @@ def parse_args(args):
         action="store_true",
         help='Use SigLip (sigmoid) loss.'
     )
+    parser.add_argument(
+        "--mask-text-prob",
+        default=1,
+        type=float,
+        help="Override the patch dropout during training, for fine tuning with no dropout near the end as in the paper",
+    )
+    parser.add_argument(
+        "--mask-text-schedule",
+        default="constant",
+        type=str,
+        help="Override the patch dropout during training, for fine tuning with no dropout near the end as in the paper",
+    )
 
     args = parser.parse_args(args)
 

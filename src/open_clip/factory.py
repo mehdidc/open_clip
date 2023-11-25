@@ -12,8 +12,8 @@ import torch
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
-from .coca_model import CoCa
-from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
+from .coca_model import CoCa, Cap
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, CaptioningLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
@@ -45,7 +45,7 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg',)):
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -151,7 +151,7 @@ def load_checkpoint(model, checkpoint_path, strict=True):
     if 'positional_embedding' in state_dict and not hasattr(model, 'positional_embedding'):
         state_dict = convert_to_custom_text_state_dict(state_dict)
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
-    if 'logit_bias' not in state_dict and model.logit_bias is not None:
+    if 'logit_bias' not in state_dict and hasattr(model, "logit_scale") and model.logit_bias is not None:
         state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
     # Certain text transformers no longer expect position_ids after transformers==4.31
     position_id_key = 'text.transformer.embeddings.position_ids'
@@ -246,7 +246,10 @@ def create_model(
         model_cfg = dict(model_cfg, **model_kwargs)  # merge cfg dict w/ kwargs (kwargs overrides cfg)
         if custom_text:
             if "multimodal_cfg" in model_cfg:
-                model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+                if "dec" in model_name:
+                    model = Cap(**model_cfg, cast_dtype=cast_dtype)
+                else:
+                    model = CoCa(**model_cfg, cast_dtype=cast_dtype)
             else:
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
@@ -331,7 +334,7 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
-    elif "coca" in args.model.lower():
+    elif "coca" in args.model.lower() or "cap" in args.model.lower():
         return CoCaLoss(
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
@@ -342,6 +345,8 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
+    elif "dec" in args.model.lower():
+        return CaptioningLoss()
     elif args.siglip:
         assert not args.horovod, "Horovod not currently supported for SigLip"
         return SigLipLoss(

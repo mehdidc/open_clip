@@ -177,6 +177,29 @@ class CoCaLoss(ClipLoss):
         return clip_loss, caption_loss
 
 
+class CaptioningLoss(nn.Module):
+    def __init__(
+            self,
+            pad_id=0,  # pad_token for open_clip custom tokenizer
+            rank=0,
+            world_size=1,
+            use_horovod=False,
+    ):
+        super().__init__()
+        self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
+
+    def forward(self, logits, labels, output_dict=False):
+    
+        caption_loss = self.caption_loss(
+            logits.permute(0, 2, 1),
+            labels,
+        )
+
+        if output_dict:
+            return {"caption_loss": caption_loss}
+
+        return caption_loss
+
 class DistillClipLoss(ClipLoss):
 
     def dist_loss(self, teacher_logits, student_logits):

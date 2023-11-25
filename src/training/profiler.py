@@ -150,9 +150,10 @@ def profile_model(model_name, batch_size=1, profiler='torch'):
     model_cfg = open_clip.get_model_config(model_name)
     if model_cfg:
         vision_cfg = open_clip.CLIPVisionCfg(**model_cfg['vision_cfg'])
-        text_cfg = open_clip.CLIPTextCfg(**model_cfg['text_cfg'])
+        if 'text_cfg' in model_cfg:
+            text_cfg = open_clip.CLIPTextCfg(**model_cfg['text_cfg'])
+            results['text_width'] = int(text_cfg.width)
         results['image_width'] = int(vision_cfg.width)
-        results['text_width'] = int(text_cfg.width)
         results['embed_dim'] = int(model_cfg['embed_dim'])
     else:
         results['image_width'] = 0
@@ -165,7 +166,12 @@ def profile_model(model_name, batch_size=1, profiler='torch'):
         try:
             results['mparams'] = round(count_params(model) / 1e6, 2)
             results['image_mparams'] = round(count_params(model.visual) / 1e6, 2)
-            results['text_mparams'] = round(count_params(model.text) / 1e6, 2)
+            if hasattr(model, "text"):
+                results['text_mparams'] = round(count_params(model.text) / 1e6, 2)
+            else:
+                results['text_mparams'] = 0
+            if hasattr(model, 'text_decoder'):
+                results['text_decoder_params'] = round(count_params(model.text_decoder) / 1e6, 2)
 
             if profiler == 'fvcore':
                 macs, acts = profile_fvcore(
@@ -188,8 +194,11 @@ def profile_model(model_name, batch_size=1, profiler='torch'):
             elif profiler == 'torch':
                 image_flops = profile_torch_image(
                     model.visual, image_input_size=image_input_size, force_cpu=not retries, batch_size=batch_size)
-                text_flops = profile_torch_text(
-                    model.text, text_input_size=text_input_size, force_cpu=not retries, batch_size=batch_size)
+                if hasattr(model, "text"):
+                    text_flops = profile_torch_text(
+                        model.text, text_input_size=text_input_size, force_cpu=not retries, batch_size=batch_size)
+                else:
+                    text_flops = 0
                 total_flops = profile_torch(
                     model, image_input_size=image_input_size, text_input_size=text_input_size, force_cpu=not retries, batch_size=batch_size)
 
