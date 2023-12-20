@@ -61,7 +61,7 @@ def accuracy(output, target, topk=(1,)):
     return [float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy()) / n for k in topk]
 
 
-def run_classification(model, classifier, dataloader, device, amp=True):
+def run_classification(model, classifier, dataloader, device, amp=True, partial_mask=False):
     """
     Run zero-shot classifcation
 
@@ -97,17 +97,15 @@ def run_classification(model, classifier, dataloader, device, amp=True):
     classifier = classifier[:, :, 0:max_text_len]
     templates = templates[:, 0:max_text_len]
 
-    partial_mask = False
 
+    print(templates)
     if partial_mask:
         templates[templates==49407] = 0
         for t in range(len(templates)):
             c = classifier[:, t]
             tp = templates[t]
             c[c==tp] = 0
-    #print(classifier[0,0])
-    #print(templates[0])
-    #sys.exit(0)
+
     with torch.no_grad():
         for images, target in tqdm(dataloader):
             images = images.to(device)
@@ -139,21 +137,30 @@ def run_classification(model, classifier, dataloader, device, amp=True):
                             logits_mini_batch.append(scores.float().cpu())
                         logits_batch.append(torch.cat(logits_mini_batch, 1))
                     logits = torch.cat(logits_batch, 2)
-                    logits = logits.mean(2)
+                    logits = logits.sum(2)
                 else:
                     # full mask
                     logits_batch = []
                     image_embs = model.encode_image(images)
 
                     raw = model.predict(image_embs=image_embs, max_text_len=max_text_len)
+                    #weights = model.score(raw, templates)
+                    #weights = (weights.view(len(raw), 1, len(templates)))
+                    #weights = weights.softmax(dim=2)
+                    #print(weights)
+                    #weights = torch.exp(weights)
+                    #print(weights[0, 0])
                     for i in range(0, nb_classes, class_per_batch):
                         texts = classifier[i:i+class_per_batch, :, :]
                         nc = texts.shape[0]
                         texts = texts.view(nc*nb_templates, texts.shape[2])
+                        #texts_length = (texts!=0).float().sum(dim=1)
                         scores = model.score(raw, texts)
+                        #scores = scores / texts_length
                         nims, _ = scores.shape
                         scores = scores.view(nims, nc, nb_templates)
                         scores = scores.mean(2)
+                        #scores = (scores*weights).sum(2)
                         logits_batch.append(scores.float().cpu())
                     logits = torch.cat(logits_batch, 1)
                     
@@ -207,7 +214,7 @@ def average_precision_per_class(scores, targets):
     return ap
 
 
-def evaluate(model, dataloader, tokenizer, classnames, templates, device, amp=True, verbose=False, save_clf=None, load_clfs=[]):
+def evaluate(model, dataloader, tokenizer, classnames, templates, device, amp=True, verbose=False, save_clf=None, load_clfs=[], partial_mask=False):
     """
     Run zero-shot classification and evaluate the metrics
 
@@ -245,7 +252,7 @@ def evaluate(model, dataloader, tokenizer, classnames, templates, device, amp=Tr
         torch.save(classifier, save_clf)
         # exit() - not sure if we want to exit here or not.
 
-    logits, target = run_classification(model, classifier, dataloader, device, amp=amp)
+    logits, target = run_classification(model, classifier, dataloader, device, amp=amp, partial_mask=partial_mask)
     is_multilabel = (len(target.shape) == 2)
 
     if is_multilabel:

@@ -4,6 +4,7 @@ from clip_benchmark.model_collection import get_model_collection_from_file, mode
 from clip_benchmark.models import load_clip
 
 import generative_classifier
+import generative_image_caption_selection
 import webdataset as wds
 import torch
 import open_clip
@@ -12,8 +13,7 @@ import json
 from glob import glob
 import os
 
-def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", dataset_root="", batch_size=32, device="cuda", output_file_format="{dataset}_{model}_{pretrained}.json", skip_existing=False):
-    tokenizer = open_clip.get_tokenizer(model)
+def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", dataset_root="", batch_size=32, device="cuda", output_file_format="{dataset}_{model}_{pretrained}.json", skip_existing=False, normalize=False):
     
     if not pretrained:
         pretraineds = [None]
@@ -21,7 +21,8 @@ def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", datas
         pretraineds = glob(pretrained)
     print(pretraineds)
     for  pretrained in pretraineds:
-        output_file = output_file_format.format(dataset=dataset_name, model=model, pretrained=os.path.basename(pretrained) if pretrained else '')
+        tokenizer = open_clip.get_tokenizer(model)
+        output_file = output_file_format.format(dataset=dataset_name.replace('/', '_'), model=model, pretrained=os.path.basename(pretrained) if pretrained else '')
         if os.path.exists(output_file) and skip_existing:
             print(f"Skipping {output_file}")
             print(open(output_file).read())
@@ -34,6 +35,7 @@ def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", datas
             transform=transform,
             split="test",
             download=True,
+            task="" if "crepe" in dataset_name else "zeroshot_classification",
         )
         if type(dataset) == wds.WebDataset:
             dataloader = torch.utils.data.DataLoader(
@@ -44,24 +46,34 @@ def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", datas
             dataloader = torch.utils.data.DataLoader(
                 dataset, batch_size=batch_size,
                 shuffle=False, num_workers=4,
+                collate_fn=get_dataset_collate_fn(dataset_name),
             )
-        classnames = dataset.classes
-        #templates = dataset.templates
-        templates = ['{c}']
-
-        zeroshot_classification
-        if 'cap' in model  or 'dec' in model:
-            eval_func = generative_classifier
+        kw = {}
+        if 'sugar_crepe' in dataset_name:
+            if 'cap' in model  or 'dec' in model:
+                eval_func = generative_image_caption_selection
+            else:
+                eval_func = image_caption_selection
+            results = eval_func.evaluate(
+                model_, dataloader, tokenizer,  device, normalize=normalize,
+            )
         else:
-            eval_func = zeroshot_classification
-        results = eval_func.evaluate(
-            model_,
-            dataloader,
-            tokenizer,
-            classnames, 
-            templates,
-            device,
-        )
+            if 'cap' in model  or 'dec' in model:
+                eval_func = generative_classifier
+            else:
+                eval_func = zeroshot_classification
+            classnames = dataset.classes
+            #templates = dataset.templates
+            templates = ['{c}']
+            results = eval_func.evaluate(
+                    model_,
+                    dataloader,
+                    tokenizer,
+                    classnames, 
+                    templates,
+                    device,
+                    **kw,
+            )
         print(f"Saving to {output_file}")
         with open(output_file, "w") as f:
             f.write(json.dumps(results))
