@@ -41,6 +41,7 @@ class TimmModel(nn.Module):
             drop_path=None,
             patch_drop=None,
             pretrained=False,
+            output_tokens=False
     ):
         super().__init__()
         if timm is None:
@@ -56,8 +57,9 @@ class TimmModel(nn.Module):
 
         custom_pool = pool in ('abs_attn', 'rot_attn')
         if proj:
-            assert proj in ("linear", "mlp", "none")
-        extra_proj = proj in ("linear", "mlp")
+            assert proj in ("linear", "mlp", "none", "linear_norm")
+        timm_kwargs['img_size'] = image_size
+        extra_proj = proj in ("linear", "mlp", "linear_norm")
         if not extra_proj and not custom_pool:
             # use network classifier head as projection if no proj specified and no custom pooling used
             # if projection is explicitly set to "none" will be pass through from network trunk
@@ -102,10 +104,15 @@ class TimmModel(nn.Module):
         if proj == 'linear':
             head_layers['drop'] = nn.Dropout(drop)
             head_layers['proj'] = nn.Linear(prev_chs, embed_dim, bias=proj_bias)
+        elif proj == "linear_norm":
+            head_layers['proj'] = nn.Linear(prev_chs, embed_dim)
+            head_layers['norm'] = nn.LayerNorm(embed_dim)
         elif proj == 'mlp':
             head_layers['mlp'] = Mlp(prev_chs, 2 * embed_dim, embed_dim, drop=(drop, 0), bias=(True, proj_bias))
-
+        elif proj == 'none':
+            pass
         self.head = nn.Sequential(head_layers)
+        self.output_tokens = output_tokens
 
     def lock(self, unlocked_groups=0, freeze_bn_stats=False):
         """ lock modules
@@ -147,6 +154,6 @@ class TimmModel(nn.Module):
             logging.warning('grad checkpointing not supported for this timm image tower, continuing without...')
 
     def forward(self, x):
-        x = self.trunk(x)
+        x = self.trunk.forward_features(x)
         x = self.head(x)
-        return x
+        return None, x

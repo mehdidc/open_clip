@@ -568,7 +568,6 @@ class Cap(nn.Module):
             if hasattr(multimodal_cfg, "hf_model_name") and multimodal_cfg.hf_model_name is not None
             else multimodal_cfg.vocab_size
         )
-
         self.visual = _build_vision_tower(
             embed_dim=embed_dim,
             vision_cfg=vision_cfg,
@@ -629,11 +628,15 @@ class Cap(nn.Module):
             text_input = text.masked_fill(text_mask, self.pad_id)
         
         if self.causal_mask:
-            text_input = text_input[:, :-1]
-            labels = text[:, 1:]
+            text_input = text[:, :-1]
+            text = text[:, 1:]
         logits = self.text_decoder(image_embs, text_input)
         out_dict = {
             "logits": logits,
             "labels": text,
         }
         return out_dict
+    
+    def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
+        # lock image tower as per LiT - https://arxiv.org/abs/2111.07991
+        self.visual.lock(unlocked_groups=unlocked_groups, freeze_bn_stats=freeze_bn_stats)

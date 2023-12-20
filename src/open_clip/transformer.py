@@ -380,7 +380,8 @@ class VisionTransformer(nn.Module):
 
         # setting a patch_dropout of 0. would mean it is disabled and this function would be the identity fn
         self.patch_dropout = PatchDropout(patch_dropout) if patch_dropout > 0. else nn.Identity()
-
+        self.width = width
+        self.output_dim = output_dim
         self.ln_pre = nn.Identity() if no_ln_pre else norm_layer(width)
         self.transformer = Transformer(
             width,
@@ -541,6 +542,9 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             pooled = pooled @ self.proj
 
+        if self.width != self.output_dim:
+            tokens = tokens @ self.proj
+        
         if self.output_tokens:
             return pooled, tokens
         
