@@ -1,0 +1,20 @@
+{
+    "embed_dim": 512,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 12,
+        "width": 512,
+        "patch_size": 32,
+        "output_tokens": true,
+        "pool": false
+    },
+    "multimodal_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 512,
+        "heads": 8,
+        "layers": 6
+    },
+    "custom_text": true,
+    "teacher_forcing": true
+}
