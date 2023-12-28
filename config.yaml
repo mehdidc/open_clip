@@ -1,0 +1,104 @@
+defs:
+  datacomp:
+    train_data: "/p/fastdata/mmlaion/datacomp/datacomp_1B/flat/{0000000..0139827}.tar"
+  laion2b:
+    train_data: "/p/fastdata/mmlaion/laion2B-en/{00000..23295}.tar"
+  dec_ViT-B-32:
+    arch: dec_ViT-B-32
+    pretrained: ""
+    lock: ""
+    batch_size: 512
+    nodes: 8
+    lr: 0.001
+  dec_ViT-B-16:
+    arch: dec_ViT-B-16
+    pretrained: ""
+    lock: ""
+    batch_size: 512
+    nodes: 8
+    lr: 0.001
+  clip_ViT-B-32:
+    arch: ViT-B-32 
+    pretrained: ""
+    lock: ""
+    batch_size: 512
+    nodes: 8
+    lr: 0.001
+  dec_b32_vision_datacomp_xl_s13b_b90k_text_scratch:
+    arch: dec_ViT-B-32-alt
+    pretrained: pretrained/dec_b32_vision_datacomp_xl_s13b_b90k_text_scratch.pt
+    lock: ""
+    batch_size: 512
+    nodes: 8
+    lr: 0.001
+  dec_vision_dinov2s14_text_b32:
+    arch: dec_vision_dinov2s14_text_b32
+    pretrained: ""
+    lock: ""
+    batch_size: 512
+    nodes: 8
+    lr: 0.001
+  dec_vision_dinov2s14_text_b32_locked_image:
+    arch: dec_vision_dinov2s14_text_b32
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 512
+    nodes: 8
+    lr: 0.001
+  dec_vision_dinov2l14_text_b32_locked_image:
+    arch: dec_vision_dinov2l14_text_b32
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 512
+    nodes: 8
+    lr: 0.001
+  dec_vision_dinov2g14_text_b32_locked_image:
+    arch: dec_vision_dinov2g14_text_b32
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0005
+  dec_vision_dinov2g14_text_l14_locked_image:
+    arch: dec_vision_dinov2g14_text_l14
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0003
+  mask_cosine:
+    mask_text_schedule: cosine
+    mask_text_prob: 0 # not used
+  mask_linear:
+    mask_text_schedule: linear
+    mask_text_prob: 0 # not used
+  mask_full:
+    mask_text_schedule: constant
+    mask_text_prob: 1.0
+  mask_none:
+    mask_text_schedule: constant
+    mask_text_prob: 0.0
+
+common:
+  template: template.sbatch
+  output_file: "{logs}/{name}/slurm.out"
+  job_id_regexp: "Job Id:(\\d+)"
+  sbatch_script: "experiments/{name}.sbatch"
+  cmd: "sbatch {sbatch_script}"
+  termination_cmd: 'let last={epochs}-1;nl=$(grep "Train Epoch: $last.*100%" {output_file}|wc -l);echo $(( (nl) > 0 ))'
+  check_interval_secs: 600
+  logs: "logs"
+
+experiments:
+  dec:
+      dataset: [datacomp]
+      model: [dec_vision_dinov2g14_text_l14_locked_image, dec_vision_dinov2g14_text_b32_locked_image, dec_ViT-B-16]
+      epochs: 50
+      train_num_samples: [128_000_000]
+      name: "{dataset}_{model}_ep{epochs}_lr{lr}_b1{beta1}_b2{beta2}_wd{wd}_w{warmup}_gc{grad_clip_norm}_{masking}_n{nodes}_bs{batch_size}"
+      masking: [mask_full]
+      beta1: 0.9
+      beta2: 0.95
+      wd: 0.2
+      warmup: 2000
+      grad_clip_norm: 1
