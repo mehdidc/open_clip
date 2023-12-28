@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5], normalize=False):
+def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5], normalize=False, normalize_type="add", normalizer=None):
     """
     Evaluate the model on the given dataset
 
@@ -30,12 +30,12 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
     
     dict of accuracy metric
     """
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    model_id = "microsoft/phi-2"
-    lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
-    lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
-    #lm_tokenizer.pad_token = lm_tokenizer.eos_token
-    #print(normalize)
+
+    if normalize:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        model_id = normalizer
+        lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
+        lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
     autocast = torch.cuda.amp.autocast if amp else suppress
     preds = []
     for batch_images, batch_texts in tqdm(dataloader):
@@ -75,7 +75,10 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
                         ll = -output.loss.sum()
                         lls.append(ll.item())
                     ll = torch.Tensor(lls).view(1, -1).to(device)
-                    scores = scores + ll
+                    if normalize_type == "add":
+                        scores = scores + ll
+                    elif normalize_type == "sub":
+                        scores = scores - ll
                 scores = scores[0]
                 if torch.any(torch.isnan(scores)):
                     print("Detected nans..")

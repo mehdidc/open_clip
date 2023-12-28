@@ -13,7 +13,7 @@ import json
 from glob import glob
 import os
 
-def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", dataset_root="", batch_size=32, device="cuda", output_file_format="{dataset}_{model}_{pretrained}.json", skip_existing=False, normalize=False):
+def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", dataset_root="", batch_size=32, device="cuda", output_file_format="{dataset}_{model}_{pretrained}.json", skip_existing=False, normalize=False,  normalizer="microsoft/phi-2", normalize_type="add"):
     
     if not pretrained:
         pretraineds = [None]
@@ -51,29 +51,39 @@ def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", datas
         kw = {}
         if 'sugar_crepe' in dataset_name:
             if 'cap' in model  or 'dec' in model:
-                eval_func = generative_image_caption_selection
+                results = generative_image_caption_selection.evaluate(
+                    model_, dataloader, tokenizer,  device, normalize=normalize, normalizer=normalizer, normalize_type=normalize_type
+                )
             else:
-                eval_func = image_caption_selection
-            results = eval_func.evaluate(
-                model_, dataloader, tokenizer,  device, normalize=normalize,
-            )
+                results = image_caption_selection.evaluate(
+                    model_, dataloader, tokenizer,  device,
+                )
         else:
-            if 'cap' in model  or 'dec' in model:
-                eval_func = generative_classifier
-            else:
-                eval_func = zeroshot_classification
             classnames = dataset.classes
             #templates = dataset.templates
             templates = ['{c}']
-            results = eval_func.evaluate(
+            if 'cap' in model  or 'dec' in model:
+                results = generative_classifier.evaluate(
+                        model_,
+                        dataloader,
+                        tokenizer,
+                        classnames, 
+                        templates,
+                        device,
+                        normalize=normalize, normalizer=normalizer, normalize_type=normalize_type,
+                )            
+            else:
+                results = zeroshot_classification.evaluate(
                     model_,
                     dataloader,
                     tokenizer,
                     classnames, 
                     templates,
                     device,
-                    **kw,
-            )
+            )          
+        results['normalize'] = normalize
+        results['normalizer'] = normalizer
+        results['normalize_type'] = normalize_type
         print(f"Saving to {output_file}")
         with open(output_file, "w") as f:
             f.write(json.dumps(results))

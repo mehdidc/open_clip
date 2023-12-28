@@ -14,6 +14,7 @@ from sklearn.metrics import classification_report, balanced_accuracy_score
 def zero_shot_classifier(model, tokenizer, classnames, templates, device, amp=True):
     autocast = torch.cuda.amp.autocast if amp else suppress
     classes = []
+    classes_raw = []
     for classname in tqdm(classnames):
         if type(templates) == dict:
             # class-specific prompts (e.g., CuPL https://arxiv.org/abs/2209.03320)
@@ -29,11 +30,12 @@ def zero_shot_classifier(model, tokenizer, classnames, templates, device, amp=Tr
         #texts = [f'{classname} picture']
         #texts = [classname]
         #print(texts)
+        classes_raw.append(texts)
         texts = tokenizer(texts)  # tokenize
         classes.append(texts)
     # nb_classes, nb_templates, nb_tokens
     templates_prefix = [t.replace('{c}', '').replace('.', '') for t in templates]
-    return torch.stack(classes).to(device), tokenizer(templates_prefix).to(device)
+    return torch.stack(classes).to(device), tokenizer(templates_prefix).to(device), classes_raw
 
 @torch.no_grad()
 def accuracy(output, target, topk=(1,)):
@@ -61,7 +63,7 @@ def accuracy(output, target, topk=(1,)):
     return [float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy()) / n for k in topk]
 
 
-def run_classification(model, classifier, dataloader, device, amp=True, partial_mask=False):
+def run_classification(model, classifier, dataloader, device, amp=True, partial_mask=False, normalize=False, normalize_type="add", normalizer=None):
     """
     Run zero-shot classifcation
 
@@ -80,13 +82,19 @@ def run_classification(model, classifier, dataloader, device, amp=True, partial_
         - true (N,) are the actual classes
     """
     autocast = torch.cuda.amp.autocast if amp else suppress
+    if normalize:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        model_id = normalizer
+        lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
+        lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
+        lm_tokenizer.pad_token = lm_tokenizer.eos_token
     pred = []
     true = []
     nb = 0
     class_per_batch = 100
     templates_per_batch = 1
 
-    classifier, templates = classifier
+    classifier, templates, classifier_raw = classifier
 
     nb_classes, nb_templates, _ = classifier.shape
     #print(classifier.shape, templates.shape)
@@ -96,9 +104,20 @@ def run_classification(model, classifier, dataloader, device, amp=True, partial_
     max_text_len = (classifier==0).float().argmax(dim=2).max()
     classifier = classifier[:, :, 0:max_text_len]
     templates = templates[:, 0:max_text_len]
+    if normalize:
+        prompts = [p for ps in classifier_raw for p in ps]
+        tokenized_classifier = lm_tokenizer.batch_encode_plus(prompts, padding=True, return_tensors="pt", max_length=77, pad_to_max_length=True).input_ids
+        tokenized_classifier = tokenized_classifier.to(device)
+        bs = 10
+        priors_all = []
+        for i in range(0, tokenized_classifier.shape[0], bs):
+            output = lm_model(tokenized_classifier[i:i+bs, 0:-1])
+            target = tokenized_classifier[i:i+bs, 1:]
+            priors = -F.cross_entropy(output.logits.transpose(1, 2), target, reduction="none", ignore_index=lm_tokenizer.pad_token_id).sum(dim=1).data.cpu()
+            priors_all.append(priors)
+        priors = torch.cat(priors_all, 0)
+        priors = priors.view(1, nb_classes, nb_templates).to(device)
 
-
-    print(templates)
     if partial_mask:
         templates[templates==49407] = 0
         for t in range(len(templates)):
@@ -134,6 +153,12 @@ def run_classification(model, classifier, dataloader, device, amp=True, partial_
                             scores = model.score(raw, texts)
                             nims, _ = scores.shape
                             scores = scores.view(nims, nc, nt)
+                            print(scores.mean(2), priors.mean(2))
+                            if normalize:
+                                if normalize_type == "add":
+                                    scores = scores + priors[:, i:i+class_per_batch, j:j+templates_per_batch]
+                                elif normalize_type == "sub":
+                                    scores = scores - priors[:, i:i+class_per_batch, j:j+templates_per_batch]
                             logits_mini_batch.append(scores.float().cpu())
                         logits_batch.append(torch.cat(logits_mini_batch, 1))
                     logits = torch.cat(logits_batch, 2)
@@ -159,6 +184,11 @@ def run_classification(model, classifier, dataloader, device, amp=True, partial_
                         #scores = scores / texts_length
                         nims, _ = scores.shape
                         scores = scores.view(nims, nc, nb_templates)
+                        if normalize:
+                            if normalize_type == "add":
+                                scores = scores + priors[:, i:i+class_per_batch]
+                            elif normalize_type == "sub":
+                                scores = scores - priors[:, i:i+class_per_batch]
                         scores = scores.mean(2)
                         #scores = (scores*weights).sum(2)
                         logits_batch.append(scores.float().cpu())
@@ -214,7 +244,7 @@ def average_precision_per_class(scores, targets):
     return ap
 
 
-def evaluate(model, dataloader, tokenizer, classnames, templates, device, amp=True, verbose=False, save_clf=None, load_clfs=[], partial_mask=False):
+def evaluate(model, dataloader, tokenizer, classnames, templates, device, amp=True, verbose=False, save_clf=None, load_clfs=[], partial_mask=False, normalize=False, normalize_type="add", normalizer=None):
     """
     Run zero-shot classification and evaluate the metrics
 
@@ -252,7 +282,7 @@ def evaluate(model, dataloader, tokenizer, classnames, templates, device, amp=Tr
         torch.save(classifier, save_clf)
         # exit() - not sure if we want to exit here or not.
 
-    logits, target = run_classification(model, classifier, dataloader, device, amp=amp, partial_mask=partial_mask)
+    logits, target = run_classification(model, classifier, dataloader, device, amp=amp, partial_mask=partial_mask, normalize=normalize, normalize_type=normalize_type, normalizer=normalizer)
     is_multilabel = (len(target.shape) == 2)
 
     if is_multilabel:
