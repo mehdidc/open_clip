@@ -34,7 +34,9 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
     if normalize:
         from transformers import AutoModelForCausalLM, AutoTokenizer
         model_id = normalizer
-        lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
+        #lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
+        
+        lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", device_map=device, trust_remote_code=True)
         lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
     autocast = torch.cuda.amp.autocast if amp else suppress
     preds = []
@@ -60,13 +62,22 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
                 if torch.any(torch.isnan(image_emb)):
                     print("Detected nans in image embs..")
                     return {"acc": 0.0}
-                raw = model.predict(
-                    image_embs=image_emb, 
-                    max_text_len=texts.shape[1],
-                )
-                texts_length = (texts!=0).float().sum(dim=-1)
-                scores = model.score(raw, texts)
-                
+                if model.causal_mask is False:
+                    raw = model.predict(
+                        image_embs=image_emb, 
+                        max_text_len=texts.shape[1],
+                    )
+                    scores = model.score(raw, texts)
+                else:
+                    nim, lim, dim = image_emb.shape
+                    ntext, ltext = texts.shape
+                    image_embs_p = image_emb.view(nim, 1, lim, dim).repeat(1, ntext, 1, 1).view(nim*ntext, lim, dim)
+                    texts_p = texts.view(1, ntext, ltext).repeat(nim, 1, 1).view(nim*ntext, ltext)
+                    input_text = texts_p[:, 0:-1]
+                    out_text = texts_p[:, 1:]
+                    logits = model.predict(image_embs=image_embs_p, text=input_text)
+                    scores = model.score_aligned(logits, out_text)
+                    scores = scores.view(nim, ntext)
                 if normalize:
                     lls = []
                     for ti in texts_raw:
