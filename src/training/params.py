@@ -280,6 +280,12 @@ def parse_args(args):
         help="Override the patch dropout during training, for fine tuning with no dropout near the end as in the paper",
     )
     parser.add_argument(
+        "--null-image-proba",
+        default=None,
+        type=float,
+        help="Override the patch dropout during training, for fine tuning with no dropout near the end as in the paper",
+    )
+    parser.add_argument(
         "--force-custom-text",
         default=False,
         action='store_true',

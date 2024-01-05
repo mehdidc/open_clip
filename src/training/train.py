@@ -103,8 +103,13 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 raise ValueError(f"Unknown mask_text_schedule: {args.mask_text_schedule}")
             u = torch.rand(texts.shape).to(texts.device)
             texts_mask = (u <= r)
-            kw['text_mask'] = texts_mask    
+            kw['text_mask'] = texts_mask
+       
         images = images.to(device=device, dtype=input_dtype, non_blocking=True)
+        if args.null_image_proba:
+            u = torch.rand(images.shape[0]).to(images.device)
+            images_mask = (u <= args.null_image_proba)
+            images[images_mask] = 0.0
         texts = texts.to(device=device, non_blocking=True)
 
         data_time_m.update(time.time() - end)

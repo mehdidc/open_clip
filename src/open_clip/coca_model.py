@@ -240,6 +240,7 @@ class CoCa(nn.Module):
         else:
             text_for_encoder = text
         text_latent, token_embs = self._encode_text(text_for_encoder)
+        print(token_embs.shape, logits.shape)
         labels = text[:, -token_embs.shape[1]:]
 
         # TODO: add assertion to avoid bugs?
@@ -606,7 +607,7 @@ class Cap(nn.Module):
         return logits
 
     @torch.no_grad()
-    def score(self, logits, texts):
+    def score(self, logits, texts,):
         # logits: (I, L, V)
         # texts: (T, L)
         I, L, V = logits.shape
@@ -619,6 +620,21 @@ class Cap(nn.Module):
         lp[texts == 0] = 0
         ce = lp.sum(dim=(2,3))
         return ce
+
+    @torch.no_grad()
+    def score_aligned(self, logits, texts):
+        # logits: (I, L, V)
+        # texts: (I, L)
+        I, L, V = logits.shape
+        I2, L = texts.shape
+        assert I == I2
+        lp = logits.log_softmax(dim=-1)
+        texts = texts.view(I, L, 1)
+        lp = torch.gather(lp, 2, texts)
+        lp[texts == 0] = 0
+        ce = lp.sum(dim=(1,2))
+        return ce
+
 
     def forward(self, image, text, text_mask=None):
         _, image_embs = self.visual(image)
