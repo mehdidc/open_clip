@@ -5,7 +5,7 @@
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=24
 #SBATCH --time=06:00:00
-#SBATCH --partition=booster
+#SBATCH --partition=dc-gpu
 #SBATCH --output={output_file}
 #SBATCH --job-name={name}
 echo "Job Id:$SLURM_JOB_ID"
@@ -28,7 +28,7 @@ srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
     --report-to=tensorboard \
     --epochs {epochs} \
     --workers=8 \
-    --model {arch} --pretrained '{pretrained}' {lock}\
+    --model {arch} --pretrained '{pretrained}' {lock} {null_image}\
     --name {name} \
     --logs {logs} \
     --seed 0 \
