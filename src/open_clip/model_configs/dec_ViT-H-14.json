@@ -1,0 +1,22 @@
+{
+    "embed_dim": 1024,
+    "quick_gelu": true,
+    "vision_cfg": {
+        "image_size": 224,
+        "layers": 32,
+        "width": 1280,
+        "head_width": 80,
+        "patch_size": 14,
+        "output_tokens": true,
+        "pool": false
+    },
+    "multimodal_cfg": {
+        "context_length": 77,
+        "vocab_size": 49408,
+        "width": 1024,
+        "heads": 8,
+        "layers": 6
+    },
+    "custom_text": true,
+    "causal_mask": false
+}
