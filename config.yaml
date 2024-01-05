@@ -1,8 +1,6 @@
 defs:
   datacomp:
     train_data: "/p/fastdata/mmlaion/datacomp/datacomp_1B/flat/{0000000..0139827}.tar"
-  laion2b:
-    train_data: "/p/fastdata/mmlaion/laion2B-en/{00000..23295}.tar"
   dec_ViT-B-32:
     arch: dec_ViT-B-32
     pretrained: ""
@@ -10,6 +8,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    null_image: ""
   dec_ViT-B-16:
     arch: dec_ViT-B-16
     pretrained: ""
@@ -17,6 +16,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    null_image: ""
   clip_ViT-B-32:
     arch: ViT-B-32 
     pretrained: ""
@@ -24,6 +24,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    null_image: ""
   dec_b32_vision_datacomp_xl_s13b_b90k_text_scratch:
     arch: dec_ViT-B-32-alt
     pretrained: pretrained/dec_b32_vision_datacomp_xl_s13b_b90k_text_scratch.pt
@@ -31,6 +32,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    null_image: ""
   dec_vision_dinov2s14_text_b32:
     arch: dec_vision_dinov2s14_text_b32
     pretrained: ""
@@ -38,6 +40,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    null_image: ""
   dec_vision_dinov2s14_text_b32_locked_image:
     arch: dec_vision_dinov2s14_text_b32
     pretrained: ""
@@ -45,6 +48,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    null_image: ""
   dec_vision_dinov2l14_text_b32_locked_image:
     arch: dec_vision_dinov2l14_text_b32
     pretrained: ""
@@ -52,6 +56,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    null_image: ""
   dec_vision_dinov2g14_text_b32_locked_image:
     arch: dec_vision_dinov2g14_text_b32
     pretrained: ""
@@ -59,6 +64,7 @@ defs:
     batch_size: 256
     nodes: 16
     lr: 0.0005
+    null_image: ""
   dec_vision_dinov2g14_text_l14_locked_image:
     arch: dec_vision_dinov2g14_text_l14
     pretrained: ""
@@ -66,6 +72,33 @@ defs:
     batch_size: 256
     nodes: 16
     lr: 0.0003
+    null_image: ""
+  dec_ViT-H-14_locked_image:
+    arch: dec_ViT-H_14
+    pretrained: "pretrained/dec_h14_vision_datacomp_dfn5b_text_scratch.pt"
+    lock: "--lock-image"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0005
+    null_image: ""
+  dec_vision_dinov2g14_text_b32_locked_image_null_image:
+    arch: dec_vision_dinov2g14_text_b32
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0005
+    null_image: "--null-image-proba 0.1"
+  
+  dec_vision_dinov2g14_text_b32_locked_image_causal:
+    arch: dec_vision_dinov2g14_text_b32_causal
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0005
+    null_image: ""
+  
   mask_cosine:
     mask_text_schedule: cosine
     mask_text_prob: 0 # not used
@@ -92,8 +125,9 @@ common:
 experiments:
   dec:
       dataset: [datacomp]
-      model: [dec_vision_dinov2g14_text_l14_locked_image, dec_vision_dinov2g14_text_b32_locked_image, dec_ViT-B-16]
-      epochs: 50
+      #model: [dec_vision_dinov2g14_text_l14_locked_image, dec_vision_dinov2g14_text_b32_locked_image, dec_ViT-B-16]
+      model: [dec_vision_dinov2g14_text_b32_locked_image_null_image,dec_vision_dinov2g14_text_b32_locked_image_causal]
+      epochs: 10
       train_num_samples: [128_000_000]
       name: "{dataset}_{model}_ep{epochs}_lr{lr}_b1{beta1}_b2{beta2}_wd{wd}_w{warmup}_gc{grad_clip_norm}_{masking}_n{nodes}_bs{batch_size}"
       masking: [mask_full]
