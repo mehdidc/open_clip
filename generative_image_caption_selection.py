@@ -33,11 +33,10 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
 
     if normalize:
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        model_id = normalizer
-        #lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
-        
-        lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", device_map=device, trust_remote_code=True)
-        lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
+        if normalizer != "self_normalize":
+            model_id = normalizer        
+            lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", device_map=device, trust_remote_code=True)
+            lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
     autocast = torch.cuda.amp.autocast if amp else suppress
     preds = []
     for batch_images, batch_texts in tqdm(dataloader):
@@ -79,17 +78,33 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
                     scores = model.score_aligned(logits, out_text)
                     scores = scores.view(nim, ntext)
                 if normalize:
-                    lls = []
-                    for ti in texts_raw:
-                        tokenized_text = lm_tokenizer(ti, return_tensors="pt").input_ids.to(device)
-                        output = lm_model(tokenized_text, labels=tokenized_text)
-                        ll = -output.loss.sum()
-                        lls.append(ll.item())
-                    ll = torch.Tensor(lls).view(1, -1).to(device)
+
+                    if normalizer == "self_normalize":
+                        c, h, w = 3, 224, 224 # TODO - make this a parameter
+                        if model.causal_mask is False:
+                            target_text = texts
+                            image_embs = model.encode_image(torch.zeros(len(texts), c, h, w).float().to(device))
+                            logits = model.predict(image_embs=image_embs, max_text_len=target_text.shape[1])
+                            priors = model.score_aligned(logits, target_text)
+                            print(priors.shape)
+                        else:
+                            input_text = texts[:, 0:-1]
+                            target_text = texts[:, 1:]
+                            image_embs = model.encode_image(torch.zeros(len(input_text), c, h, w).float().to(device))
+                            logits = model.predict(image_embs=image_embs, text=input_text)
+                            priors = model.score_aligned(logits, target_text)
+                    else:
+                        lls = []
+                        for ti in texts_raw:
+                            tokenized_text = lm_tokenizer(ti, return_tensors="pt").input_ids.to(device)
+                            output = lm_model(tokenized_text, labels=tokenized_text)
+                            ll = -output.loss.sum()
+                            lls.append(ll.item())
+                        priors = torch.Tensor(lls).view(1, -1).to(device)
                     if normalize_type == "add":
-                        scores = scores + ll
+                        scores = scores + priors
                     elif normalize_type == "sub":
-                        scores = scores - ll
+                        scores = scores - priors
                 scores = scores[0]
                 if torch.any(torch.isnan(scores)):
                     print("Detected nans..")

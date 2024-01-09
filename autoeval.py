@@ -42,7 +42,8 @@ def main(*, params="", root=".", batch_size=64, dataset="imagenet1k", dataset_ro
         cmds.append(cmd)
     
     if distributed:
-        call(cmd, shell=True)
+        cmd_all = ";".join(cmds)
+        call(cmd_all, shell=True)
     else:
         for i in range(0, len(cmds), len(gpus)):
             cmd_batch = cmds[i:i+len(gpus)]

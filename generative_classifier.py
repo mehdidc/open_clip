@@ -63,7 +63,7 @@ def accuracy(output, target, topk=(1,)):
     return [float(correct[:k].reshape(-1).float().sum(0, keepdim=True).cpu().numpy()) / n for k in topk]
 
 
-def run_classification(model, classifier, dataloader, device, amp=True, partial_mask=False, normalize=False, normalize_type="add", normalizer=None, distributed=False):
+def run_classification(model, classifier, dataloader, device, tokenizer=None, amp=True, partial_mask=False, normalize=False, normalize_type="add", normalizer=None, distributed=False):
     """
     Run zero-shot classifcation
 
@@ -83,13 +83,14 @@ def run_classification(model, classifier, dataloader, device, amp=True, partial_
     """
     autocast = torch.cuda.amp.autocast if amp else suppress
     if normalize:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        model_id = normalizer
-        #lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
-        lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", device_map=device, trust_remote_code=True)
+        if normalizer != "self_normalize":
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            model_id = normalizer
+            #lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", flash_attn=True, flash_rotary=True, fused_dense=True, device_map=device, trust_remote_code=True)
+            lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", device_map=device, trust_remote_code=True)
 
-        lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
-        lm_tokenizer.pad_token = lm_tokenizer.eos_token
+            lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
+            lm_tokenizer.pad_token = lm_tokenizer.eos_token
     pred = []
     true = []
     nb = 0
@@ -97,25 +98,38 @@ def run_classification(model, classifier, dataloader, device, amp=True, partial_
     templates_per_batch = 1
 
     classifier, templates, classifier_raw = classifier
-
     nb_classes, nb_templates, _ = classifier.shape
-    #print(classifier.shape, templates.shape)
-    #templates = templates[0:1]
-    #classifier = classifier[:, 0:1]
-
     max_text_len = (classifier==0).float().argmax(dim=2).max()
     classifier = classifier[:, :, 0:max_text_len]
     templates = templates[:, 0:max_text_len]
     if normalize:
         prompts = [p for ps in classifier_raw for p in ps]
-        tokenized_classifier = lm_tokenizer.batch_encode_plus(prompts, padding=True, return_tensors="pt", max_length=77, pad_to_max_length=True).input_ids
+        if normalizer == "self_normalize":
+            tokenized_classifier = tokenizer(prompts)
+        else:
+            tokenized_classifier = lm_tokenizer.batch_encode_plus(
+                prompts, padding=True, return_tensors="pt", max_length=77, pad_to_max_length=True).input_ids
         tokenized_classifier = tokenized_classifier.to(device)
         bs = 10
         priors_all = []
         for i in range(0, tokenized_classifier.shape[0], bs):
-            output = lm_model(tokenized_classifier[i:i+bs, 0:-1])
-            target = tokenized_classifier[i:i+bs, 1:]
-            priors = -F.cross_entropy(output.logits.transpose(1, 2), target, reduction="none", ignore_index=lm_tokenizer.pad_token_id).sum(dim=1).data.cpu()
+            if normalizer == "self_normalize":
+                c, h, w = 3, 224, 224 # TODO - make this a parameter
+                if model.causal_mask is False:
+                    target_text = tokenized_classifier[i:i+bs, :]
+                    image_embs = model.encode_image(torch.zeros(len(t), c, h, w).float().to(device))
+                    logits = model.predict(image_embs=image_embs, max_text_len=target_text.shape[1])
+                    priors = model.score_aligned(logits, target_text)
+                else:
+                    input_text = tokenized_classifier[i:i+bs, 0:-1]
+                    target_text = tokenized_classifier[i:i+bs, 1:]
+                    image_embs = model.encode_image(torch.zeros(len(t), c, h, w).float().to(device))
+                    logits = model.predict(image_embs=image_embs, text=input_text)
+                    priors = model.score_aligned(logits, target_text)
+            else:
+                output = lm_model(tokenized_classifier[i:i+bs, 0:-1])
+                target = tokenized_classifier[i:i+bs, 1:]
+                priors = -F.cross_entropy(output.logits.transpose(1, 2), target, reduction="none", ignore_index=lm_tokenizer.pad_token_id).sum(dim=1).data.cpu()
             priors_all.append(priors)
         priors = torch.cat(priors_all, 0)
         priors = priors.view(1, nb_classes, nb_templates).to(device)
@@ -127,9 +141,6 @@ def run_classification(model, classifier, dataloader, device, amp=True, partial_
             tp = templates[t]
             c[c==tp] = 0
 
-    ##
-    lengths = (classifier!=0).sum(dim=2)
-    ##
     with torch.no_grad():
         for images, target in tqdm(dataloader):
             images = images.to(device)
@@ -353,7 +364,7 @@ def evaluate(model, dataloader, tokenizer, classnames, templates, device, amp=Tr
         # exit() - not sure if we want to exit here or not.
 
     logits, target = run_classification(
-        model, classifier, dataloader, device, amp=amp, partial_mask=partial_mask, normalize=normalize, 
+        model, classifier, dataloader, device, tokenizer=tokenizer, amp=amp, partial_mask=partial_mask, normalize=normalize, 
         normalize_type=normalize_type, normalizer=normalizer, distributed=distributed
     )
     is_multilabel = (len(target.shape) == 2)
