@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5], normalize=False, normalize_type="add", normalizer=None):
+def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5], normalize=False, normalize_type="add", normalizer=None, mask_input=False, clip_augment=""):
     """
     Evaluate the model on the given dataset
 
@@ -30,13 +30,18 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
     
     dict of accuracy metric
     """
-
     if normalize:
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        if normalizer != "self_normalize":
+        if normalizer not in ("self_normalize", "self_guidance"):
             model_id = normalizer        
             lm_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype="auto", device_map=device, trust_remote_code=True)
             lm_tokenizer =  AutoTokenizer.from_pretrained(model_id)
+    if clip_augment:
+        import open_clip
+        modeln, pretrained = clip_augment.split(":")
+        clip, _, _ = open_clip.create_model_and_transforms(modeln, pretrained=pretrained)
+        clip_tokenizer = open_clip.get_tokenizer(modeln)
+        clip.to(device)
     autocast = torch.cuda.amp.autocast if amp else suppress
     preds = []
     for batch_images, batch_texts in tqdm(dataloader):
@@ -49,6 +54,8 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
 
         # compute the embedding of images and texts
         with torch.no_grad(), autocast():
+            C, H, W =batch_images.shape[1:]# TODO - make this a parameter
+
             batch_images_emb = model.encode_image(batch_images)
             start = 0
             for i, nb in enumerate(nb_texts_for_each_image):
@@ -66,33 +73,40 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
                         image_embs=image_emb, 
                         max_text_len=texts.shape[1],
                     )
+                    if normalizer == "self_guidance":
+                        image_embs = model.encode_image(torch.zeros(len(texts), C, H, W).float().to(device))
+                        uncond_logits = model.predict(image_embs=image_embs, max_text_len=texts.shape[1])
+                        alpha = 2
+                        raw = (1+alpha) * raw - alpha * uncond_logits
                     scores = model.score(raw, texts)
-                else:
+                elif model.causal_mask is True:
                     nim, lim, dim = image_emb.shape
                     ntext, ltext = texts.shape
                     image_embs_p = image_emb.view(nim, 1, lim, dim).repeat(1, ntext, 1, 1).view(nim*ntext, lim, dim)
                     texts_p = texts.view(1, ntext, ltext).repeat(nim, 1, 1).view(nim*ntext, ltext)
                     input_text = texts_p[:, 0:-1]
+                    if mask_input:
+                        input_text = input_text.clone()
+                        input_text.fill_(model.pad_id)
                     out_text = texts_p[:, 1:]
                     logits = model.predict(image_embs=image_embs_p, text=input_text)
                     scores = model.score_aligned(logits, out_text)
                     scores = scores.view(nim, ntext)
                 if normalize:
-
                     if normalizer == "self_normalize":
-                        c, h, w = 3, 224, 224 # TODO - make this a parameter
                         if model.causal_mask is False:
                             target_text = texts
-                            image_embs = model.encode_image(torch.zeros(len(texts), c, h, w).float().to(device))
+                            image_embs = model.encode_image(torch.zeros(len(texts), C, H, W).float().to(device))
                             logits = model.predict(image_embs=image_embs, max_text_len=target_text.shape[1])
                             priors = model.score_aligned(logits, target_text)
-                            print(priors.shape)
-                        else:
+                        elif model.causal_mask is True:
                             input_text = texts[:, 0:-1]
                             target_text = texts[:, 1:]
-                            image_embs = model.encode_image(torch.zeros(len(input_text), c, h, w).float().to(device))
+                            image_embs = model.encode_image(torch.zeros(len(input_text), C, H, W).float().to(device))
                             logits = model.predict(image_embs=image_embs, text=input_text)
                             priors = model.score_aligned(logits, target_text)
+                    elif normalizer == "self_guidance":
+                        priors = 0
                     else:
                         lls = []
                         for ti in texts_raw:
@@ -105,6 +119,12 @@ def evaluate(model, dataloader, tokenizer,  device, amp=True, recall_k_list=[5],
                         scores = scores + priors
                     elif normalize_type == "sub":
                         scores = scores - priors
+                if clip_augment:
+                    texts_clip = clip_tokenizer(texts_raw).to(device)
+                    emb_im = clip.encode_image(batch_images[i:i+1], normalize=True)
+                    emb_text = clip.encode_text(texts_clip, normalize=True)
+                    clip_scores = emb_im @ emb_text.T
+                    scores = scores + clip_scores
                 scores = scores[0]
                 if torch.any(torch.isnan(scores)):
                     print("Detected nans..")
