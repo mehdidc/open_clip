@@ -6,7 +6,7 @@ import re
 
 gpus = os.getenv("CUDA_VISIBLE_DEVICES", "0").split(",")
 
-def main(*, params="", root=".", batch_size=64, dataset="imagenet1k", dataset_root="/p/scratch/ccstdl/cherti1/clip_benchmark_datasets/imagenet1k", regexp="", amp=True, normalize=False, normalizer="microsoft/phi-2", normalize_type="add", output_file_format="{dataset}_{model}_{pretrained}.json", template='{c}', distributed=False):
+def main(*, params="", root=".", batch_size=64, dataset="imagenet1k", dataset_root="/p/scratch/ccstdl/cherti1/clip_benchmark_datasets/imagenet1k", regexp="", amp=True, normalize=False, normalizer="microsoft/phi-2", normalize_type="add", output_file_format="{dataset}_{model}_{pretrained}.json", template='{c}', distributed=False, mask_input=False, clip_augment=''):
     # get all .pt files recursively from root
     files = glob(os.path.join(root, "**", "*.pt"), recursive=True) 
     if regexp:
@@ -38,7 +38,7 @@ def main(*, params="", root=".", batch_size=64, dataset="imagenet1k", dataset_ro
 
         amp_s = "--no_amp" if (amp==False) else ""
         normalize_s = "--normalize" if (normalize==True) else ""
-        cmd = f"python eval.py --pretrained {f} --model {model_name} --batch-size {batch_size} --dataset-name {dataset} --dataset-root {dataset_root} --output-file-format '{path}/{output_file_format}' --skip-existing {normalize_s} --normalizer {normalizer} --normalize-type {normalize_type} {amp_s} --template '{template}' {'--distributed' if distributed else ''}"
+        cmd = f"python eval.py --pretrained {f} --model {model_name} --batch-size {batch_size} --dataset-name {dataset} --dataset-root {dataset_root} --output-file-format '{path}/{output_file_format}' --skip-existing {normalize_s} --normalizer {normalizer} --normalize-type {normalize_type} {amp_s} --template '{template}' {'--distributed' if distributed else ''} {'--mask-input' if mask_input else ''} {'--clip-augment ' + clip_augment if clip_augment else ''}"
         cmds.append(cmd)
     
     if distributed:
