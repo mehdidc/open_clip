@@ -1,11 +1,11 @@
 #!/bin/bash -x
-#SBATCH --account=cstdl
+#SBATCH --account=laionize
 #SBATCH --nodes={nodes}
 #SBATCH --gres=gpu:4
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=24
 #SBATCH --time=06:00:00
-#SBATCH --partition=dc-gpu
+#SBATCH --partition=booster
 #SBATCH --output={output_file}
 #SBATCH --job-name={name}
 echo "Job Id:$SLURM_JOB_ID"
@@ -45,5 +45,5 @@ srun --cpu_bind=none,v --accel-bind=gn python -u src/training/main.py \
     --precision amp_bfloat16 \
     --grad-checkpoint \
     --mask-text-prob {mask_text_prob} \
-    --mask-text-schedule {mask_text_schedule} \
+    --mask-text-schedule {mask_text_schedule} {distill}\
     --resume latest

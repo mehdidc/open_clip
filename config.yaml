@@ -9,6 +9,7 @@ defs:
     nodes: 8
     lr: 0.001
     null_image: ""
+    distill: ""
   dec_ViT-B-16:
     arch: dec_ViT-B-16
     pretrained: ""
@@ -17,6 +18,7 @@ defs:
     nodes: 8
     lr: 0.001
     null_image: ""
+    distill: ""
   clip_ViT-B-32:
     arch: ViT-B-32 
     pretrained: ""
@@ -25,6 +27,7 @@ defs:
     nodes: 8
     lr: 0.001
     null_image: ""
+    distill: ""
   dec_b32_vision_datacomp_xl_s13b_b90k_text_scratch:
     arch: dec_ViT-B-32-alt
     pretrained: pretrained/dec_b32_vision_datacomp_xl_s13b_b90k_text_scratch.pt
@@ -32,6 +35,7 @@ defs:
     batch_size: 512
     nodes: 8
     lr: 0.001
+    distill: ""
     null_image: ""
   dec_vision_dinov2s14_text_b32:
     arch: dec_vision_dinov2s14_text_b32
@@ -41,6 +45,7 @@ defs:
     nodes: 8
     lr: 0.001
     null_image: ""
+    distill: ""
   dec_vision_dinov2s14_text_b32_locked_image:
     arch: dec_vision_dinov2s14_text_b32
     pretrained: ""
@@ -49,6 +54,7 @@ defs:
     nodes: 8
     lr: 0.001
     null_image: ""
+    distill: ""
   dec_vision_dinov2l14_text_b32_locked_image:
     arch: dec_vision_dinov2l14_text_b32
     pretrained: ""
@@ -57,6 +63,7 @@ defs:
     nodes: 8
     lr: 0.001
     null_image: ""
+    distill: ""
   dec_vision_dinov2g14_text_b32_locked_image:
     arch: dec_vision_dinov2g14_text_b32
     pretrained: ""
@@ -65,6 +72,7 @@ defs:
     nodes: 16
     lr: 0.0005
     null_image: ""
+    distill: ""
   dec_vision_dinov2g14_text_l14_locked_image:
     arch: dec_vision_dinov2g14_text_l14
     pretrained: ""
@@ -73,6 +81,8 @@ defs:
     nodes: 16
     lr: 0.0003
     null_image: ""
+    distill: ""
+  
   dec_ViT-H-14_locked_image:
     arch: dec_ViT-H_14
     pretrained: "pretrained/dec_h14_vision_datacomp_dfn5b_text_scratch.pt"
@@ -81,6 +91,8 @@ defs:
     nodes: 16
     lr: 0.0005
     null_image: ""
+    distill: ""
+  
   dec_vision_dinov2g14_text_b32_locked_image_null_image:
     arch: dec_vision_dinov2g14_text_b32
     pretrained: ""
@@ -89,6 +101,7 @@ defs:
     nodes: 16
     lr: 0.0005
     null_image: "--null-image-proba 0.1"
+    distill: ""
   
   dec_vision_dinov2g14_text_b32_locked_image_causal:
     arch: dec_vision_dinov2g14_text_b32_causal
@@ -98,7 +111,46 @@ defs:
     nodes: 16
     lr: 0.0005
     null_image: ""
+    distill: ""
+
+  dec_vision_dinov2g14_text_b32_locked_image_distill_from_causal:
+    arch: dec_vision_dinov2g14_text_b32
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 128
+    nodes: 32
+    lr: 0.0003
+    null_image: ""
+    distill: "--distill-model dec_vision_dinov2g14_text_b32_causal --distill-pretrained logs/datacomp_dec_vision_dinov2g14_text_b32_locked_image_causal_ep10_lr0.0005_b10.9_b20.95_wd0.2_w2000_gc1_mask_full_n16_bs256/checkpoints/epoch_latest.pt"
   
+  dec_vision_dinov2g14_text_b32_locked_image_unlock_1_group:
+    arch: dec_vision_dinov2g14_text_b32
+    pretrained: ""
+    lock: "--lock-image --lock-image-unlocked-groups 1"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0005
+    null_image: ""
+    distill: ""
+  dec_vision_dinov2g14_text_b32_locked_image_causal_unlock_1_group:
+    arch: dec_vision_dinov2g14_text_b32_causal
+    pretrained: ""
+    lock: "--lock-image --lock-image-unlocked-groups 1"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0005
+    null_image: ""
+    distill: ""
+  
+  dec_vision_dinov2g14_text_l14_locked_image_causal:
+    arch: dec_vision_dinov2g14_text_l14_causal
+    pretrained: ""
+    lock: "--lock-image"
+    batch_size: 256
+    nodes: 16
+    lr: 0.0005
+    null_image: ""
+    distill: ""
   mask_cosine:
     mask_text_schedule: cosine
     mask_text_prob: 0 # not used
@@ -111,7 +163,9 @@ defs:
   mask_none:
     mask_text_schedule: constant
     mask_text_prob: 0.0
-
+  mask_suffix:
+    mask_text_schedule: suffix
+    mask_text_prob: 0.0 # not used
 common:
   template: template.sbatch
   output_file: "{logs}/{name}/slurm.out"
@@ -125,12 +179,11 @@ common:
 experiments:
   dec:
       dataset: [datacomp]
-      #model: [dec_vision_dinov2g14_text_l14_locked_image, dec_vision_dinov2g14_text_b32_locked_image, dec_ViT-B-16]
-      model: [dec_vision_dinov2g14_text_b32_locked_image_null_image,dec_vision_dinov2g14_text_b32_locked_image_causal]
+      model: [dec_vision_dinov2g14_text_b32_locked_image_distill_from_causal, dec_vision_dinov2g14_text_l14_locked_image_causal]
       epochs: 10
       train_num_samples: [128_000_000]
       name: "{dataset}_{model}_ep{epochs}_lr{lr}_b1{beta1}_b2{beta2}_wd{wd}_w{warmup}_gc{grad_clip_norm}_{masking}_n{nodes}_bs{batch_size}"
-      masking: [mask_full]
+      masking: mask_full
       beta1: 0.9
       beta2: 0.95
       wd: 0.2
