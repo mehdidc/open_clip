@@ -200,6 +200,31 @@ class CaptioningLoss(nn.Module):
 
         return caption_loss
 
+class DistillCaptioningLoss(nn.Module):
+    def __init__(
+            self,
+            pad_id=0,  # pad_token for open_clip custom tokenizer
+            rank=0,
+            world_size=1,
+            use_horovod=False,
+    ):
+        super().__init__()
+        self.pad_id = pad_id
+    
+    def dist_loss(self, teacher_logits, student_logits, mask):
+        l = -(teacher_logits.softmax(dim=-1) * student_logits.log_softmax(dim=-1)).sum(dim=2)
+        #length = mask.sum(dim=1)
+        #l = (l * mask) / length
+        return l.mean()
+    
+    def forward(self, logits, labels, dist_logits, dist_labels, output_dict=False):
+        mask = (dist_labels!=self.pad_id)
+        loss = self.dist_loss(dist_logits, logits[:, 0:-1], mask)
+        if output_dict:
+            return {"dist_loss": loss}
+        else:
+            return loss
+
 class DistillClipLoss(ClipLoss):
 
     def dist_loss(self, teacher_logits, student_logits):

@@ -852,13 +852,15 @@ class MultimodalDecoder(Transformer):
             for _ in range(layers)
         ])
         
-        self.register_buffer('attn_mask', self.build_attention_mask(causal), persistent=False)
+        self.register_buffer('attn_mask_causal', self.build_attention_mask(causal=True), persistent=False)
+        self.register_buffer('attn_mask_non_causal', self.build_attention_mask(causal=False), persistent=False)
 
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.num_pos = self.context_length = context_length
         self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
+        self.causal = causal
 
     def init_parameters(self):
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
@@ -897,14 +899,16 @@ class MultimodalDecoder(Transformer):
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LNDsq
         image_embs = image_embs.permute(1, 0, 2)  # NLD -> LND
         seq_len = text_embs.shape[0]
+        
+        attn_mask = self.attn_mask_causal if self.causal else self.attn_mask_non_causal
 
         for resblock, cross_attn in zip(self.resblocks, self.cross_attn):
             if self.grad_checkpointing and not torch.jit.is_scripting():
                 # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
-                text_embs = checkpoint(resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len])
+                text_embs = checkpoint(resblock, text_embs, None, None, attn_mask[:seq_len, :seq_len])
                 text_embs = checkpoint(cross_attn, text_embs, image_embs, image_embs, None)
             else:
-                text_embs = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len])
+                text_embs = resblock(text_embs, attn_mask=attn_mask[:seq_len, :seq_len])
                 text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
 
         x = text_embs.permute(1, 0, 2)  # LND -> NLD

@@ -99,10 +99,21 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 r = cosine_schedule(r)
             elif args.mask_text_schedule == "constant":
                 r = args.mask_text_prob
+
+            if args.mask_text_schedule == "suffix":
+                r = torch.rand(texts.shape[0]).to(texts.device)
+                # shape of r: (batch_size,)
+                pad_id = 0
+                lengths = (texts != pad_id).sum(dim=1)
+                # shape of lengths: (batch_size,)
+                indices = (r * lengths).long()
+                # shape of indices: (batch_size,)
+                texts_mask = torch.arange(texts.shape[1], device=texts.device)[None,:] > indices[:,None]
+                # shape of texts_mask: (batch_size, seq_len)
             else:
-                raise ValueError(f"Unknown mask_text_schedule: {args.mask_text_schedule}")
-            u = torch.rand(texts.shape).to(texts.device)
-            texts_mask = (u <= r)
+                u = torch.rand(texts.shape).to(texts.device)
+                texts_mask = (u <= r)
+            
             kw['text_mask'] = texts_mask
        
         images = images.to(device=device, dtype=input_dtype, non_blocking=True)

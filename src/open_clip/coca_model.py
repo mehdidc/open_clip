@@ -222,6 +222,7 @@ class CoCa(nn.Module):
         #ce = (lp * texts).sum(dim=(2,3))
         return ce
 
+
     def forward(
             self,
             image,
@@ -634,7 +635,10 @@ class Cap(nn.Module):
         lp[texts == 0] = 0
         ce = lp.sum(dim=(1,2))
         return ce
-
+    
+    def set_causal(self, causal=True):
+        self.causal_mask = causal
+        self.text_decoder.causal = causal
 
     def forward(self, image, text, text_mask=None):
         _, image_embs = self.visual(image)
@@ -644,7 +648,7 @@ class Cap(nn.Module):
             text_input = text.masked_fill(text_mask, self.pad_id)
         
         if self.causal_mask:
-            text_input = text[:, :-1]
+            text_input = text_input[:, :-1]
             text = text[:, 1:]
         logits = self.text_decoder(image_embs, text_input)
         out_dict = {
