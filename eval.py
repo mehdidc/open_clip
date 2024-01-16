@@ -32,7 +32,7 @@ def world_info_from_env():
             break
     return local_rank, global_rank, world_size
 
-def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", dataset_root="", batch_size=32, device="cuda", output_file_format="{dataset}_{model}_{pretrained}.json", skip_existing=False, normalize=False,  normalizer="microsoft/phi-2", normalize_type="add", template='{c}', distributed=False):
+def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", dataset_root="", batch_size=32, device="cuda", output_file_format="{dataset}_{model}_{pretrained}.json", skip_existing=False, normalize=False,  normalizer="microsoft/phi-2", normalize_type="add", template='{c}', distributed=False, mask_input=False, clip_augment=''):
     if distributed:
         local_rank, global_rank, world_size = world_info_from_env()
         os.environ['LOCAL_RANK'] = str(local_rank)
@@ -83,7 +83,9 @@ def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", datas
         if 'sugar_crepe' in dataset_name:
             if 'cap' in model  or 'dec' in model:
                 results = generative_image_caption_selection.evaluate(
-                    model_, dataloader, tokenizer,  device, normalize=normalize, normalizer=normalizer, normalize_type=normalize_type
+                    model_, dataloader, tokenizer,  device, normalize=normalize, normalizer=normalizer, normalize_type=normalize_type, 
+                    mask_input=mask_input,
+                    clip_augment=clip_augment,
                 )
             else:
                 results = image_caption_selection.evaluate(
@@ -104,6 +106,7 @@ def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", datas
                     device,
                     normalize=normalize, normalizer=normalizer, normalize_type=normalize_type,
                     distributed=distributed,
+                    mask_input=mask_input,
                 )            
             else:
                 results = zeroshot_classification.evaluate(
@@ -117,6 +120,7 @@ def main(*, model="cap_ViT-B-32", pretrained=None, dataset_name="cifar10", datas
         results['normalize'] = normalize
         results['normalizer'] = normalizer
         results['normalize_type'] = normalize_type
+        results['mask_input'] = mask_input
 
         if rank_zero:
             print(f"Saving to {output_file}")
