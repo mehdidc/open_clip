@@ -12,8 +12,8 @@ import torch
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
-from .coca_model import CoCa
-from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
+from .coca_model import CoCa, SymGen
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, SymGenLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
@@ -244,8 +244,10 @@ def create_model(
 
         model_cfg = dict(model_cfg, **model_kwargs)  # merge cfg dict w/ kwargs (kwargs overrides cfg)
         if custom_text:
-            if "multimodal_cfg" in model_cfg:
+            if "coca" in model_name.lower():            
                 model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+            elif "sg" in model_name.lower():
+                model = SymGen(**model_cfg, cast_dtype=cast_dtype)
             else:
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
@@ -334,6 +336,23 @@ def create_loss(args):
         return CoCaLoss(
             caption_loss_weight=args.coca_caption_loss_weight,
             clip_loss_weight=args.coca_contrastive_loss_weight,
+            local_loss=args.local_loss,
+            gather_with_grad=args.gather_with_grad,
+            cache_labels=True,
+            rank=args.rank,
+            world_size=args.world_size,
+            use_horovod=args.horovod,
+        )
+    elif "sg" in args.model.lower():
+        return SymGenLoss(
+            caption_loss_weight=args.sg_caption_loss_weight,
+            unimodal_caption_loss_weight=args.sg_unimodal_caption_loss_weight,
+
+            image_loss_weight=args.sg_image_loss_weight,
+            unimodal_image_loss_weight=args.sg_unimodal_image_loss_weight,
+
+            clip_loss_weight=args.sg_contrastive_loss_weight,
+
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             cache_labels=True,

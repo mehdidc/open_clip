@@ -275,6 +275,9 @@ def main(args):
             unlocked_layers=args.lock_text_unlocked_layers,
             freeze_layer_norm=args.lock_text_freeze_layer_norm)
 
+    if args.model.startswith("sg") and args.sg_contrastive_loss_weight == 0:
+        model.no_contrastive()
+    
     if args.grad_checkpointing:
         model.set_grad_checkpointing()
 
