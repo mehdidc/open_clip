@@ -12,7 +12,8 @@ import torch
 from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
-from .coca_model import CoCa, SymGen
+from .coca_model import CoCa
+from .symgen import SymGen
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, SymGenLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\

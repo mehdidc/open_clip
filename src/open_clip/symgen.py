@@ -14,6 +14,8 @@ from .transformer import (
     MultimodalDecoder
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+
+from .image_tokenizer import build_image_tokenizer
 try:
     from transformers import (
         BeamSearchScorer,
@@ -49,26 +51,78 @@ class MultimodalCfg(CLIPTextCfg):
     n_queries: int = 256
     attn_pooler_heads: int = 8
     context_length: int = 77
-    vocab_size: int = 49408
+    context_length_image: int = 196
+    context_length_text: int = 77
+    vocab_size_image: int = 20000
+    vocab_size_text: int = 49408
     tied_decoder: bool = False
 
-class CoCa(nn.Module):
+@dataclass
+class ImageTokenizerCfg():
+
+    name: str = "image_patch" # or taming or icetk
+    # only for taming
+    config_path: str = "vqgan_imagenet_f16_16384.yaml"
+    model_path: str = "vqgan_imagenet_f16_16384.ckpt"
+
+    # compress_rate for icetk
+    compress_rate: int = 16
+
+
+
+def _build_decoder_tower(
+        embed_dim,
+        multimodal_cfg,
+        quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None,
+        context_length: int = 77,
+        discrete=True,
+        input_dim=None,
+):
+    multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = (
+        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+    )
+
+    decoder = MultimodalDecoder(
+        context_length=context_length,
+        width=multimodal_cfg.width,
+        heads=multimodal_cfg.heads,
+        layers=multimodal_cfg.layers,
+        ls_init_value=multimodal_cfg.ls_init_value,
+        output_dim=embed_dim,
+        act_layer=act_layer,
+        norm_layer=norm_layer,
+        vocab_size=embed_dim,
+        discrete_input=discrete,
+        input_dim=input_dim,
+
+    )
+
+    return decoder
+
+
+class SymGen(nn.Module):
     def __init__(
             self,
             embed_dim,
             multimodal_cfg: MultimodalCfg,
             text_cfg: CLIPTextCfg,
             vision_cfg: CLIPVisionCfg,
+            image_tokenizer_cfg: ImageTokenizerCfg,
             quick_gelu: bool = False,
             init_logit_scale: float = np.log(1 / 0.07),
             init_logit_bias: Optional[float] = None,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
+            contrastive=False,
     ):
         super().__init__()
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
+        self.image_tokenizer = build_image_tokenizer(**image_tokenizer_cfg)
 
         self.text = _build_text_tower(
             embed_dim=embed_dim,
@@ -78,7 +132,7 @@ class CoCa(nn.Module):
         )
 
         vocab_size = (
-            text_cfg.vocab_size  # for hf models
+            text_cfg.vocab_size
             if hasattr(text_cfg, "hf_model_name") and text_cfg.hf_model_name is not None
             else text_cfg.vocab_size
         )
@@ -90,13 +144,35 @@ class CoCa(nn.Module):
             cast_dtype=cast_dtype,
         )
 
-        self.text_decoder = _build_text_decoder_tower(
-            vocab_size,
-            multimodal_cfg=multimodal_cfg,
-            quick_gelu=quick_gelu,
-            cast_dtype=cast_dtype,
-        )
+        self.tied_decoder = multimodal_cfg.tied_decoder
+        if self.tied_decoder:
+            self.decoder = _build_decoder_tower(
+                multimodal_cfg.vocab_size_text + multimodal_cfg.vocab_size_image,
+                multimodal_cfg=multimodal_cfg,
+                quick_gelu=quick_gelu,
+                cast_dtype=cast_dtype,
+                context_length=max(multimodal_cfg.context_length_text, multimodal_cfg.context_length_image),
+            )
+            self.image_decoder = self.decoder
+            self.text_decoder = self.decoder
 
+        else:
+            self.text_decoder = _build_decoder_tower(
+                multimodal_cfg.vocab_size_text,
+                multimodal_cfg=multimodal_cfg,
+                quick_gelu=quick_gelu,
+                cast_dtype=cast_dtype,
+                context_length=multimodal_cfg.context_length_text,
+            )
+            self.image_decoder = _build_decoder_tower(
+                multimodal_cfg.vocab_size_image,
+                multimodal_cfg=multimodal_cfg,
+                quick_gelu=quick_gelu,
+                cast_dtype=cast_dtype,
+                context_length=multimodal_cfg.context_length_image,
+                discrete=self.image_tokenizer.discrete,
+                input_dim=None if self.image_tokenizer.discrete else self.image_tokenizer.dim,
+            )
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
         if init_logit_bias is not None:
             self.logit_bias = nn.Parameter(torch.ones([]) * init_logit_bias)
@@ -105,6 +181,16 @@ class CoCa(nn.Module):
         self.pad_id = pad_id
 
         self.context_length = multimodal_cfg.context_length
+
+        self.register_buffer("image_mean", torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1))
+        self.register_buffer("image_std", torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1))
+            
+    def no_contrastive(self):
+        self.visual.proj.requires_grad = False
+        self.text.ln_final.bias.requires_grad = False
+        self.text.ln_final.weight.requires_grad = False
+        self.text.text_projection.requires_grad = False
+        self.logit_scale.requires_grad = False
 
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable: bool = True):
@@ -134,26 +220,57 @@ class CoCa(nn.Module):
             self,
             image,
             text: Optional[torch.Tensor] = None,
+            image_tokens: Optional[torch.Tensor] = None,
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
     ):
-        if image_latent is None or image_embs is None:
+        if image_latent is None and image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
         if text is None:
             return {"image_features": image_latent, "image_embs": image_embs}
 
+        if image_tokens is None:
+            with torch.no_grad():
+                image_0_1 = (image * self.image_std + self.image_mean) if self.image_tokenizer.needs_0_1 else image
+                image_tokens = self.image_tokenizer.tokenize(image_0_1)
+
         text_latent, token_embs = self._encode_text(text)
 
         # TODO: add assertion to avoid bugs?
-        labels = text[:, -token_embs.shape[1]:]
+        #print(image_embs.shape, token_embs.shape, image_tokens.shape, text.shape)
 
-        logits = self.text_decoder(image_embs, token_embs)
+
+        num_image_tokens = self.image_tokenizer.num_image_tokens if self.tied_decoder else 0
+
+        input_text = text[:, 0:-1] + num_image_tokens
+        labels_text = text[:, 1:] + num_image_tokens
+
+        input_image = image_tokens[:, 0:-1]
+        labels_image = image_tokens[:, 1:]
+
+        #print("Image Shape", input_image.shape, labels_image.shape, image_tokens.min(), image_tokens.max(), image_tokens.mean())
+    
+        logits_text = self.text_decoder(image_embs, input_text)
+        logits_image = self.image_decoder(token_embs, input_image)
+
+        logits_text_unimodal = self.text_decoder(None, input_text)
+        logits_image_unimodal = self.image_decoder(None, input_image)
+    
         out_dict = {
             "image_features": image_latent,
             "text_features": text_latent,
-            "logits": logits,
-            "labels": labels,
+
+            "logits_image": logits_image,
+            "logits_text": logits_text,
+
+            "logits_image_unimodal": logits_image_unimodal,
+            "logits_text_unimodal": logits_text_unimodal,
+
+            "labels_image": labels_image,
+            "labels_text": labels_text,
+            
+            
             "logit_scale": self.logit_scale.exp()
         }
         if self.logit_bias is not None:
@@ -162,12 +279,12 @@ class CoCa(nn.Module):
 
     def generate(
         self,
-        image,
+        image=None,
         text=None,
         seq_len=30,
         max_seq_len=77,
         temperature=1.,
-        generation_type="beam_search",
+        generation_type="top_p",
         top_p=0.1,  # keep tokens in the 1 - top_p quantile
         top_k=1,  # keeps the top_k most probable tokens
         pad_token_id=None,
@@ -203,7 +320,7 @@ class CoCa(nn.Module):
                 stopping_criteria
             )
 
-            device = image.device
+            device = image.device if image else text.device
 
             if generation_type == "beam_search":
                 output = self._generate_beamsearch(
@@ -234,10 +351,18 @@ class CoCa(nn.Module):
                     f"{'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
                 )
 
-            image_latent, image_embs = self._encode_image(image)
-
-            if text is None:
-                text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
+                
+            if image is not None:
+                image_latent, image_embs = self._encode_image(image)
+                N = len(image_embs)
+                text_embs = None
+            if text is not None:
+                text_latent, text_embs = self._encode_text(text)
+                N = len(text_embs)
+                image_embs = None
+            seq = None
+            if seq is None:
+                seq = torch.ones((N, 1), device=device, dtype=torch.long) * sot_token_id
 
             was_training = self.training
             num_dims = len(text.shape)
@@ -247,12 +372,18 @@ class CoCa(nn.Module):
 
             cur_len = text.shape[1]
             self.eval()
-            out = text
+            out = seq
 
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, -1]
+                #logits = self(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, -1]
+                #print(out.min(), out.max())
+                if text_embs is not None:
+                    logits = self.image_decoder(text_embs, out)[:, -1]
+                else:
+                    logits = self.text_decoder(image_embs, out)[:,-1]
+
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -260,20 +391,19 @@ class CoCa(nn.Module):
                     if not fixed_output_length:
                         break
                 else:
+
                     logits = logits[~mask, :]
                     filtered_logits = logit_processor(x[~mask, :], logits)
                     filtered_logits = logit_warper(x[~mask, :], filtered_logits)
                     probs = F.softmax(filtered_logits / temperature, dim=-1)
-
+                    #probs = F.softmax(logits / temperature, dim=-1)
                     if (cur_len + 1 == seq_len):
                         sample[~mask, :] = torch.ones((sum(~mask), 1), device=device, dtype=torch.long) * eos_token_id
                     else:
                         sample[~mask, :] = torch.multinomial(probs, 1)
 
                 out = torch.cat((out, sample), dim=-1)
-
                 cur_len += 1
-
                 if stopping_criteria(out, None):
                     break
 
@@ -282,6 +412,19 @@ class CoCa(nn.Module):
 
             self.train(was_training)
             return out
+
+    def score(self, logits, texts):
+        # logits: (I, L, V)
+        # texts: (I, L)
+        I, L, V = logits.shape
+        I2, L = texts.shape
+        assert I == I2
+        lp = logits.log_softmax(dim=-1)
+        texts = texts.view(I, L, 1)
+        lp = torch.gather(lp, 2, texts)
+        lp[texts == 0] = 0
+        ce = lp.sum(dim=(1,2))
+        return ce
 
     def _generate_beamsearch(
             self,
@@ -431,24 +574,3 @@ class CoCa(nn.Module):
         )
         return sequence_outputs['sequences']
 
-
-def prepare_inputs_for_generation(input_ids, image_inputs, past=None, **kwargs):
-    if past:
-        input_ids = input_ids[:, -1].unsqueeze(-1)
-
-    attention_mask = kwargs.get("attention_mask", None)
-    position_ids = kwargs.get("position_ids", None)
-
-    if attention_mask is not None and position_ids is None:
-        # create position_ids on the fly for batch generation
-        position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 1)
-    else:
-        position_ids = None
-    return {
-        "text": input_ids,
-        "images": image_inputs,
-        "past_key_values": past,
-        "position_ids": position_ids,
-        "attention_mask": attention_mask,
-    }
