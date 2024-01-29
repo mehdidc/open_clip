@@ -816,6 +816,8 @@ class MultimodalDecoder(Transformer):
             output_dim: int = 512,
             causal=True,
             vocab_size: int = 49408,
+            discrete_input=True,
+            input_dim=None,#only for discrete input is False
     ):
 
         super().__init__(
@@ -845,10 +847,15 @@ class MultimodalDecoder(Transformer):
         self.register_buffer('attn_mask', self.build_attention_mask(causal=True, context_length=self.context_length), persistent=False)
         self.ln_final = norm_layer(width)
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
-        self.token_embedding = nn.Embedding(vocab_size, width)
+        if discrete_input:
+            self.token_embedding = nn.Embedding(vocab_size, width)
+        else:
+            self.token_embedding = nn.Linear(input_dim, width)
+
         self.num_pos = self.context_length
         self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
         self.causal = causal
+        self.discrete_input = discrete_input
 
     def init_parameters(self):
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
@@ -881,10 +888,8 @@ class MultimodalDecoder(Transformer):
 
     def forward(self, image_embs, text):
         seq_len = text.shape[1]
-        #print(text.max(), self.vocab_size)
-        text_embs = self.token_embedding(text)
+        text_embs = self.token_embedding(text)        
         text_embs = text_embs + self.positional_embedding[:seq_len]
-        
         text_embs = text_embs.permute(1, 0, 2)  # NLD -> LNDsq
         
         if image_embs is not None:

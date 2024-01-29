@@ -15,6 +15,7 @@ from .transformer import (
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
 
+from .image_tokenizer import build_image_tokenizer
 try:
     from transformers import (
         BeamSearchScorer,
@@ -56,12 +57,27 @@ class MultimodalCfg(CLIPTextCfg):
     vocab_size_text: int = 49408
     tied_decoder: bool = False
 
+@dataclass
+class ImageTokenizerCfg():
+
+    name: str = "image_patch" # or taming or icetk
+    # only for taming
+    config_path: str = "vqgan_imagenet_f16_16384.yaml"
+    model_path: str = "vqgan_imagenet_f16_16384.ckpt"
+
+    # compress_rate for icetk
+    compress_rate: int = 16
+
+
+
 def _build_decoder_tower(
         embed_dim,
         multimodal_cfg,
         quick_gelu: bool = False,
         cast_dtype: Optional[torch.dtype] = None,
         context_length: int = 77,
+        discrete=True,
+        input_dim=None,
 ):
     multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
     act_layer = QuickGELU if quick_gelu else nn.GELU
@@ -79,6 +95,9 @@ def _build_decoder_tower(
         act_layer=act_layer,
         norm_layer=norm_layer,
         vocab_size=embed_dim,
+        discrete_input=discrete,
+        input_dim=input_dim,
+
     )
 
     return decoder
@@ -493,19 +512,19 @@ class SymGen(nn.Module):
             multimodal_cfg: MultimodalCfg,
             text_cfg: CLIPTextCfg,
             vision_cfg: CLIPVisionCfg,
+            image_tokenizer_cfg: ImageTokenizerCfg,
             quick_gelu: bool = False,
             init_logit_scale: float = np.log(1 / 0.07),
             init_logit_bias: Optional[float] = None,
             cast_dtype: Optional[torch.dtype] = None,
             pad_id: int = 0,
-            image_tokenizer=None,
-            image_tokenizer_kw=None,
             contrastive=False,
     ):
         super().__init__()
         multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
         text_cfg = CLIPTextCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         vision_cfg = CLIPVisionCfg(**vision_cfg) if isinstance(vision_cfg, dict) else vision_cfg
+        self.image_tokenizer = build_image_tokenizer(**image_tokenizer_cfg)
 
         self.text = _build_text_tower(
             embed_dim=embed_dim,
@@ -553,6 +572,8 @@ class SymGen(nn.Module):
                 quick_gelu=quick_gelu,
                 cast_dtype=cast_dtype,
                 context_length=multimodal_cfg.context_length_image,
+                discrete=self.image_tokenizer.discrete,
+                input_dim=None if self.image_tokenizer.discrete else self.image_tokenizer.dim,
             )
         self.logit_scale = nn.Parameter(torch.ones([]) * init_logit_scale)
         if init_logit_bias is not None:
@@ -565,17 +586,7 @@ class SymGen(nn.Module):
 
         self.register_buffer("image_mean", torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(1, 3, 1, 1))
         self.register_buffer("image_std", torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(1, 3, 1, 1))
-        if image_tokenizer is None:
-            from icetk import IceTokenizer
-            self.image_tokenizer = IceTokenizer()
-            self.image_tokenizer_kw = {
-                "compress_rate": 16,
-            }
-        else:
-            self.image_tokenizer  = image_tokenizer
-            self.image_tokenizer_kw = image_tokenizer_kw or {}
             
-
     def no_contrastive(self):
         self.visual.proj.requires_grad = False
         self.text.ln_final.bias.requires_grad = False
@@ -615,16 +626,16 @@ class SymGen(nn.Module):
             image_latent: Optional[torch.Tensor] = None,
             image_embs: Optional[torch.Tensor] = None,
     ):
-        if image_latent is None or image_embs is None:
+        if image_latent is None and image_embs is None:
             image_latent, image_embs = self._encode_image(image)
 
         if text is None:
             return {"image_features": image_latent, "image_embs": image_embs}
+
         if image_tokens is None:
             with torch.no_grad():
-                image_0_1 = image * self.image_std + self.image_mean
-                image_tokens = self.image_tokenizer.encode(image_torch=image_0_1, **self.image_tokenizer_kw)
-                #image_tokens = torch.randint(0, 100, size=(len(image), 196), device=image.device, dtype=torch.long)
+                image_0_1 = (image * self.image_std + self.image_mean) if self.image_tokenizer.needs_0_1 else image
+                image_tokens = self.image_tokenizer.tokenize(image_0_1)
 
         text_latent, token_embs = self._encode_text(text)
 
@@ -639,10 +650,11 @@ class SymGen(nn.Module):
 
         input_image = image_tokens[:, 0:-1]
         labels_image = image_tokens[:, 1:]
+
+        #print("Image Shape", input_image.shape, labels_image.shape, image_tokens.min(), image_tokens.max(), image_tokens.mean())
     
         logits_text = self.text_decoder(image_embs, input_text)
         logits_image = self.image_decoder(token_embs, input_image)
-
 
         logits_text_unimodal = self.text_decoder(None, input_text)
         logits_image_unimodal = self.image_decoder(None, input_image)
@@ -669,12 +681,12 @@ class SymGen(nn.Module):
 
     def generate(
         self,
-        image,
+        image=None,
         text=None,
         seq_len=30,
         max_seq_len=77,
         temperature=1.,
-        generation_type="beam_search",
+        generation_type="top_p",
         top_p=0.1,  # keep tokens in the 1 - top_p quantile
         top_k=1,  # keeps the top_k most probable tokens
         pad_token_id=None,
@@ -710,7 +722,7 @@ class SymGen(nn.Module):
                 stopping_criteria
             )
 
-            device = image.device
+            device = image.device if image else text.device
 
             if generation_type == "beam_search":
                 output = self._generate_beamsearch(
@@ -741,10 +753,18 @@ class SymGen(nn.Module):
                     f"{'| ' + ' | '.join(list(GENERATION_TYPES.keys())) + ' |'}."
                 )
 
-            image_latent, image_embs = self._encode_image(image)
-
-            if text is None:
-                text = torch.ones((image.shape[0], 1), device=device, dtype=torch.long) * sot_token_id
+                
+            if image is not None:
+                image_latent, image_embs = self._encode_image(image)
+                N = len(image_embs)
+                text_embs = None
+            if text is not None:
+                text_latent, text_embs = self._encode_text(text)
+                N = len(text_embs)
+                image_embs = None
+            seq = None
+            if seq is None:
+                seq = torch.ones((N, 1), device=device, dtype=torch.long) * sot_token_id
 
             was_training = self.training
             num_dims = len(text.shape)
@@ -754,12 +774,18 @@ class SymGen(nn.Module):
 
             cur_len = text.shape[1]
             self.eval()
-            out = text
+            out = seq
 
             while True:
                 x = out[:, -max_seq_len:]
                 cur_len = x.shape[1]
-                logits = self(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, -1]
+                #logits = self(image, x, image_latent=image_latent, image_embs=image_embs)["logits"][:, -1]
+                #print(out.min(), out.max())
+                if text_embs is not None:
+                    logits = self.image_decoder(text_embs, out)[:, -1]
+                else:
+                    logits = self.text_decoder(image_embs, out)[:,-1]
+
                 mask = (out[:, -1] == eos_token_id) | (out[:, -1] == pad_token_id)
                 sample = torch.ones((out.shape[0], 1), device=device, dtype=torch.long) * pad_token_id
 
@@ -767,20 +793,19 @@ class SymGen(nn.Module):
                     if not fixed_output_length:
                         break
                 else:
+
                     logits = logits[~mask, :]
                     filtered_logits = logit_processor(x[~mask, :], logits)
                     filtered_logits = logit_warper(x[~mask, :], filtered_logits)
                     probs = F.softmax(filtered_logits / temperature, dim=-1)
-
+                    #probs = F.softmax(logits / temperature, dim=-1)
                     if (cur_len + 1 == seq_len):
                         sample[~mask, :] = torch.ones((sum(~mask), 1), device=device, dtype=torch.long) * eos_token_id
                     else:
                         sample[~mask, :] = torch.multinomial(probs, 1)
 
                 out = torch.cat((out, sample), dim=-1)
-
                 cur_len += 1
-
                 if stopping_criteria(out, None):
                     break
 
@@ -789,6 +814,19 @@ class SymGen(nn.Module):
 
             self.train(was_training)
             return out
+
+    def score(self, logits, texts):
+        # logits: (I, L, V)
+        # texts: (I, L)
+        I, L, V = logits.shape
+        I2, L = texts.shape
+        assert I == I2
+        lp = logits.log_softmax(dim=-1)
+        texts = texts.view(I, L, 1)
+        lp = torch.gather(lp, 2, texts)
+        lp[texts == 0] = 0
+        ce = lp.sum(dim=(1,2))
+        return ce
 
     def _generate_beamsearch(
             self,

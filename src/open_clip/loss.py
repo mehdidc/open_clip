@@ -207,7 +207,10 @@ class SymGenLoss(ClipLoss):
         self.image_loss_weight = image_loss_weight
         self.unimodal_caption_loss_weight = unimodal_caption_loss_weight
         self.unimodal_image_loss_weight = unimodal_image_loss_weight
+        
         self.caption_loss = nn.CrossEntropyLoss(ignore_index=pad_id)
+        self.image_loss_ce = nn.CrossEntropyLoss()
+        self.image_loss_mse = nn.MSELoss()
 
     def forward(self, image_features, text_features, logits_image, logits_text, logits_image_unimodal, logits_text_unimodal, labels_image, labels_text, logit_scale, output_dict=False):
         
@@ -221,18 +224,29 @@ class SymGenLoss(ClipLoss):
             logits_text.permute(0, 2, 1),
             labels_text,
         )
-        image_loss = self.caption_loss(
-            logits_image.permute(0, 2, 1),
-            labels_image,
-        )
         caption_loss_unimodal = self.caption_loss(
             logits_text_unimodal.permute(0, 2, 1),
             labels_text,
         )
-        image_loss_unimodal = self.caption_loss(
-            logits_image_unimodal.permute(0, 2, 1),
-            labels_image,
-        )
+
+        if logits_image.shape != labels_image.shape:
+            image_loss = self.image_loss_ce(
+                logits_image.permute(0, 2, 1),
+                labels_image,
+            )
+            image_loss_unimodal = self.image_loss_ce(
+                logits_image_unimodal.permute(0, 2, 1),
+                labels_image,
+            )
+        else:
+            image_loss = self.image_loss_mse(
+                logits_image,
+                labels_image,
+            )
+            image_loss_unimodal = self.image_loss_mse(
+                logits_image_unimodal,
+                labels_image,
+            )
         
         caption_loss = caption_loss * self.caption_loss_weight
         image_loss = image_loss * self.image_loss_weight
