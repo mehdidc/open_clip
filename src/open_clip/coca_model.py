@@ -11,9 +11,9 @@ from .transformer import (
     LayerNorm,
     QuickGELU,
     MultimodalTransformer,
-    MultimodalDecoder
 )
 from .model import CLIPTextCfg, CLIPVisionCfg, _build_vision_tower, _build_text_tower
+
 try:
     from transformers import (
         BeamSearchScorer,
@@ -48,9 +48,33 @@ class MultimodalCfg(CLIPTextCfg):
     heads: int = 8
     n_queries: int = 256
     attn_pooler_heads: int = 8
-    context_length: int = 77
-    vocab_size: int = 49408
-    tied_decoder: bool = False
+
+
+def _build_text_decoder_tower(
+        embed_dim,
+        multimodal_cfg,
+        quick_gelu: bool = False,
+        cast_dtype: Optional[torch.dtype] = None,
+):
+    multimodal_cfg = MultimodalCfg(**multimodal_cfg) if isinstance(multimodal_cfg, dict) else multimodal_cfg
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = (
+        LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+    )
+
+    decoder = MultimodalTransformer(
+        context_length=multimodal_cfg.context_length,
+        width=multimodal_cfg.width,
+        heads=multimodal_cfg.heads,
+        layers=multimodal_cfg.layers,
+        ls_init_value=multimodal_cfg.ls_init_value,
+        output_dim=embed_dim,
+        act_layer=act_layer,
+        norm_layer=norm_layer,
+    )
+
+    return decoder
+
 
 class CoCa(nn.Module):
     def __init__(

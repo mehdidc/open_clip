@@ -220,33 +220,56 @@ class SymGenLoss(ClipLoss):
             clip_loss = super().forward(image_features, text_features, logit_scale)
             clip_loss = self.clip_loss_weight * clip_loss
 
-        caption_loss = self.caption_loss(
-            logits_text.permute(0, 2, 1),
-            labels_text,
-        )
-        caption_loss_unimodal = self.caption_loss(
-            logits_text_unimodal.permute(0, 2, 1),
-            labels_text,
-        )
 
-        if logits_image.shape != labels_image.shape:
-            image_loss = self.image_loss_ce(
-                logits_image.permute(0, 2, 1),
-                labels_image,
-            )
-            image_loss_unimodal = self.image_loss_ce(
-                logits_image_unimodal.permute(0, 2, 1),
-                labels_image,
+        if self.caption_loss_weight:
+            caption_loss = self.caption_loss(
+                logits_text.permute(0, 2, 1),
+                labels_text,
             )
         else:
-            image_loss = self.image_loss_mse(
-                logits_image,
-                labels_image,
+            caption_loss = torch.tensor(0)
+    
+        if self.unimodal_caption_loss_weight:
+            caption_loss_unimodal = self.caption_loss(
+                logits_text_unimodal.permute(0, 2, 1),
+                labels_text,
             )
-            image_loss_unimodal = self.image_loss_mse(
-                logits_image_unimodal,
-                labels_image,
-            )
+        else:
+            caption_loss_unimodal = torch.tensor(0)
+
+        if logits_image is not None and logits_image.shape != labels_image.shape:
+
+            if self.image_loss_weight:
+                image_loss = self.image_loss_ce(
+                    logits_image.permute(0, 2, 1),
+                    labels_image,
+                )
+            else:
+                image_loss = torch.tensor(0)
+            
+            if self.unimodal_image_loss_weight:
+                image_loss_unimodal = self.image_loss_ce(
+                    logits_image_unimodal.permute(0, 2, 1),
+                    labels_image,
+                )
+            else:
+                image_loss_unimodal = torch.tensor(0)
+        else:
+            if self.image_loss_weight:
+                image_loss = self.image_loss_mse(
+                    logits_image,
+                    labels_image,
+                )
+            else:
+                image_loss = torch.tensor(0)
+            
+            if self.unimodal_image_loss_weight:
+                image_loss_unimodal = self.image_loss_mse(
+                    logits_image_unimodal,
+                    labels_image,
+                )
+            else:
+                image_loss_unimodal = torch.tensor(0)
         
         caption_loss = caption_loss * self.caption_loss_weight
         image_loss = image_loss * self.image_loss_weight

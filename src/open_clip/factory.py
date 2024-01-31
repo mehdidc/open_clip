@@ -13,7 +13,7 @@ from .constants import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
-from .symgen import SymGen
+from .symgen import SymGen, SymGenDecoder
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, SymGenLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
@@ -45,8 +45,8 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
-                _MODEL_CONFIGS[cf.stem] = model_cfg
+            #if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+            _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
 
@@ -247,8 +247,10 @@ def create_model(
         if custom_text:
             if "coca" in model_name.lower():            
                 model = CoCa(**model_cfg, cast_dtype=cast_dtype)
-            elif "sg" in model_name.lower():
+            elif model_name.startswith("sg"):
                 model = SymGen(**model_cfg, cast_dtype=cast_dtype)
+            elif model_name.startswith("sd"):
+                model = SymGenDecoder(**model_cfg, cast_dtype=cast_dtype)
             else:
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
@@ -315,7 +317,7 @@ def create_model(
         model = torch.jit.script(model)
 
     # set image preprocessing configuration in model attributes for convenience
-    if getattr(model.visual, 'image_size', None) is not None:
+    if hasattr(model, "visual") and getattr(model.visual, 'image_size', None) is not None:
         # use image_size set on model creation (via config or force_image_size arg)
         force_preprocess_cfg['size'] = model.visual.image_size
     set_model_preprocess_cfg(model, merge_preprocess_dict(preprocess_cfg, force_preprocess_cfg))
@@ -344,7 +346,7 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
-    elif "sg" in args.model.lower():
+    elif args.model.startswith("sg") or args.model.startswith("sd"): 
         return SymGenLoss(
             caption_loss_weight=args.sg_caption_loss_weight,
             unimodal_caption_loss_weight=args.sg_unimodal_caption_loss_weight,

@@ -31,7 +31,7 @@ class BaseImageTokenizer():
 
     @property
     def dim(self):
-        raise NotImplementedError()
+        pass
 
 class TamingTokenizer(BaseImageTokenizer):
 
