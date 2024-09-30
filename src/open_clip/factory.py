@@ -14,7 +14,8 @@ from .convert import convert_state_dict
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .coca_model import CoCa
-from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
+from .cap_model import Cap
+from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, CapLoss
 from .openai import load_openai_model
 from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
     list_pretrained_tags_by_model, download_pretrained_from_hf
@@ -45,7 +46,7 @@ def _rescan_model_configs():
     for cf in config_files:
         with open(cf, 'r') as f:
             model_cfg = json.load(f)
-            if all(a in model_cfg for a in ('embed_dim', 'vision_cfg', 'text_cfg')):
+            if all(a in model_cfg for a in ('vision_cfg', 'text_cfg')):
                 _MODEL_CONFIGS[cf.stem] = model_cfg
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
@@ -258,11 +259,13 @@ def create_model(
         custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
 
         model_cfg = dict(model_cfg, **model_kwargs)  # merge cfg dict w/ kwargs (kwargs overrides cfg)
-        if custom_text:
-            if "multimodal_cfg" in model_cfg:
-                model = CoCa(**model_cfg, cast_dtype=cast_dtype)
-            else:
-                model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
+
+        if "coca" in model_name:
+            model = CoCa(**model_cfg, cast_dtype=cast_dtype)
+        elif "cap" in model_name:
+            model = Cap(**model_cfg, cast_dtype=cast_dtype)
+        elif custom_text:
+            model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
             model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
@@ -356,6 +359,8 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
+    elif "cap" in args.model.lower():
+        return CapLoss(pad_id=0)
     elif args.siglip:
         assert not args.horovod, "Horovod not currently supported for SigLip"
         return SigLipLoss(

@@ -99,7 +99,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         if args.accum_freq == 1:
             with autocast():
                 model_out = model(images, texts)
-                logit_scale = model_out["logit_scale"]
+                
+                if "logit_scale" in model_out:
+                    logit_scale = model_out["logit_scale"]
+                else:
+                    logit_scale = None
                 if args.distill:
                     with torch.no_grad():
                         dist_model_out = dist_model(images, texts)
@@ -117,7 +121,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     model_out = model(images, texts)
 
                     for f in ("logit_scale", "logit_bias"):
-                        model_out.pop(f, None)
+                        if f in model_out:
+                            model_out.pop(f, None)
 
                     for key, val in model_out.items():
                         if key in accum_features:
@@ -144,7 +149,9 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     model_out = model(images, texts)
 
                     inputs_no_accum = {}
-                    inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
+
+                    if logit_scale is not None:
+                        inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
                     if "logit_bias" in model_out:
                         inputs_no_accum["logit_bias"] = model_out.pop("logit_bias")
 
@@ -184,9 +191,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         if args.accum_freq > 1:
             accum_images, accum_texts, accum_features = [], [], {}
 
-        # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+
+        if logit_scale is not None:
+            # Note: we clamp to 4.6052 = ln(100), as in the original paper.
+            with torch.no_grad():
+                unwrap_model(model).logit_scale.clamp_(0, math.log(100))
 
         batch_time_m.update(time.time() - end)
         end = time.time()
@@ -203,7 +212,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                     losses_m[key] = AverageMeter()
                 losses_m[key].update(val.item(), batch_size)
 
-            logit_scale_scalar = logit_scale.item()
+            if logit_scale is not None:
+                logit_scale_scalar = logit_scale.item()
             loss_log = " ".join(
                 [
                     f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
@@ -217,7 +227,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 f"Data (t): {data_time_m.avg:.3f} "
                 f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
                 f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
+                f"Logit Scale: {logit_scale_scalar:.3f} " if logit_scale is not None else "" + loss_log
             )
 
             # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
@@ -226,9 +236,11 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                 "batch_time": batch_time_m.val,
                 "samples_per_second": samples_per_second,
                 "samples_per_second_per_gpu": samples_per_second_per_gpu,
-                "scale": logit_scale_scalar,
                 "lr": optimizer.param_groups[0]["lr"]
-            }            
+            }
+            if logit_scale is not None:
+                log_data["scale"] = logit_scale_scalar
+
             log_data.update({name:val.val for name,val in losses_m.items()})
 
             log_data = {"train/" + name: val for name, val in log_data.items()}

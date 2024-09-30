@@ -906,3 +906,123 @@ class MultimodalTransformer(Transformer):
     @torch.jit.ignore
     def set_grad_checkpointing(self, enable=True):
         self.grad_checkpointing = enable
+
+
+class CapTransformer(nn.Module):
+
+    def __init__(
+            self,
+            context_length: int = 77,
+            vocab_size: int = 49408,
+            width: int = 512,
+            heads: int = 8,
+            layers: int = 12,
+            mlp_ratio: float = 4.0,
+            ls_init_value: float = None,
+            embed_cls: bool = False,
+            no_causal_mask: bool = False,
+            pad_id: int = 0,
+            proj_bias: bool = False,
+            act_layer: Callable = nn.GELU,
+            norm_layer: Callable = LayerNorm,
+            batch_first=True,
+    ):
+        super().__init__()
+        self.num_pos = self.context_length = context_length
+        self.vocab_size = vocab_size
+        self.width = width
+        output_dim = vocab_size
+        self.output_dim = output_dim
+        
+        self.heads = heads
+        self.pad_id = pad_id
+
+        self.token_embedding = nn.Embedding(vocab_size, width)
+        self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
+        self.transformer = Transformer(
+            width=width,
+            layers=layers,
+            heads=heads,
+            mlp_ratio=mlp_ratio,
+            ls_init_value=ls_init_value,
+            act_layer=act_layer,
+            norm_layer=norm_layer,
+        )
+        self.ln_final = norm_layer(width)
+
+        if no_causal_mask:
+            self.attn_mask = None
+        else:
+            self.register_buffer('attn_mask', self.build_causal_mask(), persistent=False)
+
+        if proj_bias:
+            self.text_projection = nn.Linear(width, output_dim)
+        else:
+            self.text_projection = nn.Parameter(torch.empty(width, output_dim))
+        self.cross_attn = nn.ModuleList([
+            ResidualAttentionBlock(
+                width,
+                heads,
+                mlp_ratio,
+                ls_init_value=ls_init_value,
+                act_layer=act_layer,
+                norm_layer=norm_layer,
+                is_cross_attention=True,
+                batch_first=batch_first,
+            )
+            for _ in range(layers)
+        ])
+        self.init_parameters()
+
+    def init_parameters(self):
+        nn.init.normal_(self.token_embedding.weight, std=0.02)
+        nn.init.normal_(self.positional_embedding, std=0.01)
+        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        attn_std = self.transformer.width ** -0.5
+        fc_std = (2 * self.transformer.width) ** -0.5
+        for block in self.transformer.resblocks:
+            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+
+        if self.text_projection is not None:
+            if isinstance(self.text_projection, nn.Linear):
+                nn.init.normal_(self.text_projection.weight, std=self.transformer.width ** -0.5)
+                if self.text_projection.bias is not None:
+                    nn.init.zeros_(self.text_projection.bias)
+            else:
+                nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable=True):
+        self.grad_checkpointing = enable
+
+    def build_causal_mask(self):
+        # lazily create causal attention mask, with full attention between the tokens
+        # pytorch uses additive attention mask; fill with -inf
+        mask = torch.empty(self.num_pos, self.num_pos)
+        mask.fill_(float("-inf"))
+        mask.triu_(1)  # zero out the lower diagonal
+        return mask
+
+
+    def forward(self, image_embs, text):
+        cast_dtype = self.transformer.get_cast_dtype()
+        seq_len = text.shape[1]
+        x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
+        attn_mask = self.attn_mask
+        x = x + self.positional_embedding[:seq_len].to(cast_dtype)
+        text_embs = x
+        for resblock, cross_attn in zip(self.transformer.resblocks, self.cross_attn):
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                # TODO: handle kwargs https://github.com/pytorch/pytorch/issues/79887#issuecomment-1161758372
+                text_embs = checkpoint(resblock, text_embs, None, None, self.attn_mask[:seq_len, :seq_len])
+                text_embs = checkpoint(cross_attn, text_embs, image_embs, image_embs, None)
+            else:
+                text_embs = resblock(text_embs, attn_mask=self.attn_mask[:seq_len, :seq_len])
+                text_embs = cross_attn(text_embs, k_x=image_embs, v_x=image_embs)
+        out = self.ln_final(text_embs)
+        logits = out @ self.text_projection        
+        return logits
+    
