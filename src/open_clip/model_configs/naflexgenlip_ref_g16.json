@@ -1,0 +1,34 @@
+{
+    "embed_dim": 1024,
+    "preprocess_cfg": {"mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
+    "genlip_cfg": {
+        "width": 1536,
+        "depth": 40,
+        "num_heads": 16,
+        "intermediate_size": 4096,
+        "text_embed_dim": 1024,
+        "mrope_section": [16, 16, 16],
+        "rope_theta": 10000.0,
+        "ls_init_value": 0.1,
+        "drop_path_rate": 0.2,
+        "gated_attention": true,
+        "use_swiglu_ffn": true,
+        "mrope_interleaved": true,
+        "hidden_act": "silu",
+        "layer_norm_eps": 1e-6,
+        "max_position_embeddings": 16384,
+        "attention_bias": true,
+        "mlp_bias": true
+    },
+    "vision_cfg": {"image_size": 224, "patch_size": 16, "in_chans": 3, "proj_bias": true},
+    "text_cfg": {
+        "vocab_size": 151936,
+        "context_length": 256,
+        "pad_id": 151643,
+        "bos_id": null,
+        "eos_id": 151645,
+        "hf_tokenizer_name": "Qwen/Qwen3-0.6B",
+        "tokenizer_mode": "genlip",
+        "tokenizer_kwargs": {"clean": "identity", "pad_token": "<|endoftext|>"}
+    }
+}

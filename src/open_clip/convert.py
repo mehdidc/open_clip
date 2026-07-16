@@ -275,7 +275,99 @@ def convert_mammut_state_dict(model, state_dict):
     return out_dict
 
 
+def is_genlip_state_dict(state_dict):
+    """Return True for checkpoints exported by the reference GenLIP codebase."""
+    return (
+        'vision_embeddings.patch_embedding.weight' in state_dict
+        and any(k.startswith('visual.layers.0.self_attn.') for k in state_dict)
+    )
+
+
+def convert_genlip_state_dict(model, state_dict):
+    """Convert a reference GenLIP checkpoint to an OpenCLIP GenLIP layout.
+
+    The reference implementation stores its image patch projection as a Conv2d and calls
+    the shared transformer ``visual``. OpenCLIP consumes pre-patchified NaFlex inputs through
+    a Linear and calls the same transformer ``trunk``. All transformer tensors otherwise have
+    identical shapes and semantics.
+
+    ``model`` may be a full :class:`NaFlexGenLip` or a standalone GenLIP vision tower. Using
+    the destination state dict to select keys also takes care of the registered aliases under
+    ``NaFlexGenLip.visual`` without hard-coding one target model shape.
+    """
+    target_state = model.state_dict()
+    canonical = {}
+
+    for key, value in state_dict.items():
+        if key.startswith('vision_embeddings.patch_embedding.'):
+            suffix = key.removeprefix('vision_embeddings.patch_embedding.')
+            if suffix == 'weight':
+                value = value.flatten(1)
+            canonical[f'patch_embed.proj.{suffix}'] = value
+        elif key.startswith('visual.layers.'):
+            canonical['trunk.layers.' + key.removeprefix('visual.layers.')] = value
+        elif key.startswith('ln_post.'):
+            canonical['trunk.ln_post.' + key.removeprefix('ln_post.')] = value
+        elif key == 'embeddings.weight':
+            canonical['text_embed.weight'] = value
+        elif key.startswith('in_proj.'):
+            canonical[key] = value
+        elif key.startswith('proj.'):
+            canonical['out_proj.' + key.removeprefix('proj.')] = value
+        elif key.startswith('lm_head.'):
+            canonical[key] = value
+
+    vision_only = not any(
+        k.startswith(('text_embed.', 'lm_head.', 'in_proj.', 'out_proj.'))
+        for k in target_state
+    )
+    converted = {}
+    for target_key, target_value in target_state.items():
+        source_key = target_key
+        if target_key.startswith('visual.patch_embed.'):
+            source_key = target_key.removeprefix('visual.')
+        elif target_key.startswith('visual.trunk.'):
+            source_key = target_key.removeprefix('visual.')
+        elif target_key.startswith('visual.proj.'):
+            source_key = 'out_proj.' + target_key.removeprefix('visual.proj.')
+        elif target_key.startswith('proj.'):
+            # Standalone GenLIP vision tower: initialize its contrastive projection from
+            # the reference model's learned width -> text_embed_dim projection.
+            source_key = 'out_proj.' + target_key.removeprefix('proj.')
+
+        if source_key not in canonical:
+            continue
+        value = canonical[source_key]
+        if value.shape != target_value.shape:
+            if vision_only and target_key.startswith('proj.'):
+                # A contrastive model may deliberately choose an embedding dimension different
+                # from GenLIP's text dimension. Keep that new projection randomly initialized.
+                continue
+            raise RuntimeError(
+                f"GenLIP checkpoint tensor '{source_key}' has shape {tuple(value.shape)}, but "
+                f"destination '{target_key}' expects {tuple(target_value.shape)}. Check that the "
+                "OpenCLIP model config matches the reference GenLIP architecture."
+            )
+        converted[target_key] = value
+
+    if not converted:
+        raise RuntimeError(
+            "Detected a reference GenLIP checkpoint, but the destination model has no compatible "
+            "GenLIP parameters. Use a NaFlexGenLip model or a CLIP config with a GenLIP vision tower."
+        )
+    return converted
+
+
+def convert_vision_state_dict(model, state_dict):
+    """Convert a third-party checkpoint intended for a vision tower only."""
+    if is_genlip_state_dict(state_dict):
+        return convert_genlip_state_dict(model, state_dict), 'genlip'
+    return state_dict, None
+
+
 def convert_state_dict(model: Union[CustomTextCLIP, CLIP], state_dict):
+    if is_genlip_state_dict(state_dict):
+        state_dict = convert_genlip_state_dict(model, state_dict)
     if 'image_encoder.model.patch_embed.0.rbr_conv.0.conv.weight' in state_dict:
         # Apple MobileCLIP s1 & s2 state_dicts (s0 and b not currently supported)
         state_dict = convert_mobile_clip_state_dict(model, state_dict)

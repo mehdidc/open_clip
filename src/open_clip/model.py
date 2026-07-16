@@ -77,6 +77,14 @@ class CLIPVisionCfg:
     timm_drop_path: Optional[float] = None  # backbone stochastic depth
     timm_model_kwargs: Optional[dict] = None  # additional kwargs forwarded to timm.create_model()
 
+    # GenLIP vision tower. When set, the standard ViT/timm fields above are ignored except
+    # image/patch size, pool_type, and the front-end controls below.
+    genlip_cfg: Optional[dict] = None
+    in_chans: int = 3
+    proj_bias: bool = True
+    input_norm: bool = False
+    pre_norm: bool = False
+
 
 @dataclass
 class CLIPTextCfg:
@@ -196,7 +204,49 @@ def _build_vision_tower(
     # NOTE: timm models always use native GELU regardless of quick_gelu flag.
     act_layer = QuickGELU if quick_gelu else nn.GELU
 
-    if vision_cfg.timm_model_name:
+    if vision_cfg.genlip_cfg is not None:
+        from .naflex_genlip_model import (
+            GenLipPatchEmbed,
+            GenLipRotaryEmbedding,
+            GenLipTrunk,
+            NaFlexGenLipTrunkCfg,
+            NaFlexGenLipVisionCfg,
+            NaFlexGenLipVisualAdapter,
+            _make_norm_layer,
+        )
+
+        if isinstance(vision_cfg.image_size, (tuple, list)):
+            if vision_cfg.image_size[0] != vision_cfg.image_size[1]:
+                raise ValueError("GenLIP vision_cfg.image_size must be square.")
+            image_size = int(vision_cfg.image_size[0])
+        else:
+            image_size = int(vision_cfg.image_size)
+        trunk_cfg = NaFlexGenLipTrunkCfg(**vision_cfg.genlip_cfg)
+        genlip_vision_cfg = NaFlexGenLipVisionCfg(
+            image_size=image_size,
+            patch_size=int(vision_cfg.patch_size),
+            in_chans=vision_cfg.in_chans,
+            proj_bias=vision_cfg.proj_bias,
+            input_norm=vision_cfg.input_norm,
+            pre_norm=vision_cfg.pre_norm,
+            pool_type=vision_cfg.pool_type,
+        )
+        norm_layer = _make_norm_layer(trunk_cfg.norm_type, trunk_cfg.layer_norm_eps)
+        patch_embed = GenLipPatchEmbed(
+            genlip_vision_cfg,
+            trunk_cfg.width,
+            norm_eps=trunk_cfg.layer_norm_eps,
+            norm_layer=norm_layer,
+        )
+        visual = NaFlexGenLipVisualAdapter(
+            patch_embed,
+            GenLipTrunk(trunk_cfg),
+            GenLipRotaryEmbedding(trunk_cfg),
+            genlip_vision_cfg,
+            trunk_cfg.width,
+            embed_dim,
+        )
+    elif vision_cfg.timm_model_name:
         visual = TimmModel(
             vision_cfg.timm_model_name,
             pretrained=vision_cfg.timm_model_pretrained,

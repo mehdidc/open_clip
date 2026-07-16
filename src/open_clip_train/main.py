@@ -283,6 +283,7 @@ def main(args):
         audio_aug_cfg=audio_aug_cfg,
         force_naflex_vision=args.force_naflex_vision,
         pretrained_image=args.pretrained_image,
+        pretrained_image_path=args.pretrained_image_path,
         pretrained_audio_path=args.pretrained_audio,
         output_dict=True,
         cache_dir=args.cache_dir,

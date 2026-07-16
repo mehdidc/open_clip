@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 
-from .convert import convert_state_dict
+from .convert import convert_state_dict, convert_vision_state_dict
 from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 from .clap_model import CLAP
@@ -241,6 +241,8 @@ def load_state_dict(
 
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
+    elif isinstance(checkpoint, dict) and 'model' in checkpoint and isinstance(checkpoint['model'], dict):
+        state_dict = checkpoint['model']
     else:
         state_dict = checkpoint
     if next(iter(state_dict.items()))[0].startswith('module'):
@@ -280,7 +282,7 @@ def load_checkpoint(
         state_dict['logit_bias'] = state_dict['logit_bias'].reshape(model.logit_bias.shape)
 
     # If loading a non-SigLIP model for SigLIP training. See https://github.com/mlfoundations/open_clip/issues/712
-    if 'logit_bias' not in state_dict and model.logit_bias is not None:
+    if 'logit_bias' not in state_dict and getattr(model, 'logit_bias', None) is not None:
         state_dict["logit_bias"] = torch.zeros_like(state_dict["logit_scale"])
 
     # Certain text transformers no longer expect position_ids after transformers==4.31
@@ -502,6 +504,11 @@ def create_model(
     # Apply model config overrides
     if model_cfg is None:
         raise RuntimeError("Model configuration could not be determined after Stage 1.")
+    # Built-in third-party architecture configs may carry their required image normalization
+    # alongside the model definition even when weights are supplied as a local path.
+    inline_preprocess_cfg = model_cfg.pop('preprocess_cfg', None)
+    if inline_preprocess_cfg:
+        preprocess_cfg = merge_preprocess_dict(preprocess_cfg, inline_preprocess_cfg)
     # MaMMUT models have no text_cfg, the decoder in multimodal_cfg is the text tower
     # (external configs are translated at ingestion: _get_hf_config / local-dir load / registry scan)
     text_cfg = model_cfg.get('text_cfg') or model_cfg.get('multimodal_cfg') or {}
@@ -521,7 +528,7 @@ def create_model(
             vision_cfg["patch_dropout"] = force_patch_dropout
         if force_image_size is not None:
             vision_cfg["image_size"] = force_image_size
-        if force_naflex_vision:
+        if force_naflex_vision and vision_cfg.get('genlip_cfg') is None:
             apply_naflex_vision_config(model_cfg)
     if force_context_length is not None:
         text_cfg["context_length"] = force_context_length
@@ -656,8 +663,21 @@ def create_model(
                 )
                 # Check if model has the 'visual' attribute
                 if hasattr(model, 'visual'):
-                    # Load into the visual tower, use strict=False for flexibility
+                    image_state_dict, converted_format = convert_vision_state_dict(
+                        model.visual, image_state_dict)
+                    # Tower checkpoints need not contain a newly selected contrastive projection.
                     incompatible_keys = model.visual.load_state_dict(image_state_dict, strict=False)
+                    if converted_format == 'genlip':
+                        bad_missing = [
+                            k for k in incompatible_keys.missing_keys
+                            if not k.startswith('proj.')
+                        ]
+                        if bad_missing or incompatible_keys.unexpected_keys:
+                            raise RuntimeError(
+                                "Reference GenLIP vision checkpoint did not load completely. "
+                                f"Missing keys: {bad_missing}; unexpected keys: "
+                                f"{incompatible_keys.unexpected_keys}"
+                            )
                     _logger.info(
                         f"Loaded image tower weights from {pretrained_image_path}. Incompatible keys: {incompatible_keys}")
                     pretrained_image_loaded = True # Mark specific image weights as loaded
@@ -668,6 +688,9 @@ def create_model(
             except Exception as e:
                 # Handle errors during image tower weight loading
                 _logger.error(f"Error loading image tower weights from {pretrained_image_path}: {e}")
+                raise RuntimeError(
+                    f"Failed to load image tower weights from {pretrained_image_path}"
+                ) from e
         else:
             # Path provided is not a valid file
             _logger.warning(f"Invalid file path specified for pretrained_image_path: {pretrained_image_path}")
@@ -1046,7 +1069,11 @@ def create_loss(args, model: Optional[torch.nn.Module] = None):
         is_genlip = isinstance(model, (NaFlexGenLip, NaFlexGenLap))
     else:
         is_captioning = "coca" in args.model.lower() or "mammut" in args.model.lower()
-        is_genlip = "genlip" in args.model.lower() or "genlap" in args.model.lower()
+        is_genlip = getattr(args, 'genlip', None)
+        if is_genlip is None:
+            is_genlip = "genlip" in args.model.lower() or "genlap" in args.model.lower()
+        else:
+            is_genlip = bool(is_genlip or getattr(args, 'genlap', False))
 
     cache_labels = _use_loss_label_cache(args)
     if args.distill:

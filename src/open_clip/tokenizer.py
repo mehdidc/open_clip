@@ -98,6 +98,8 @@ def _clean_whitespace_underscore(x):
 
 
 def get_clean_fn(type: str):
+    if type in (None, 'identity'):
+        return lambda text: text
     if type == 'canonicalize':
         return _clean_canonicalize
     elif type == 'lower':
@@ -466,6 +468,9 @@ class HFTokenizer:
         self.context_length = context_length
         self.clean_fn = get_clean_fn(clean)
         self.strip_sep_token = strip_sep_token
+        # GenLIP trains on raw Qwen tokens followed by the token sequence for
+        # ``<|im_end|>\n`` (not a generic, necessarily scalar EOS token).
+        genlip_suffix_text = kwargs.pop('genlip_suffix_text', '<|im_end|>\n')
 
         # NOTE: Left as example of loading custom tokenizer from file for experimentation
         # if self.tokenizer_mode == 'bert_clips':
@@ -514,6 +519,10 @@ class HFTokenizer:
         if self.sot_token_id is None:
             self.sot_token_id = self.tokenizer.cls_token_id
         self.vocab_size = len(self.tokenizer)
+        self.genlip_suffix_ids = (
+            self.tokenizer.encode(genlip_suffix_text, add_special_tokens=False)
+            if self.tokenizer_mode == 'genlip' else []
+        )
 
         # Set language function if available
         set_lang_fn = getattr(self.tokenizer, 'set_src_lang_special_tokens', None)
@@ -551,6 +560,31 @@ class HFTokenizer:
         # Handle different tokenization modes
         if self.tokenizer_mode == 'clips':
             return self._clips_tokenize(texts, context_length, pad=pad)
+        elif self.tokenizer_mode == 'genlip':
+            texts = [text.strip() for text in texts]
+            encoded = self.tokenizer(
+                texts,
+                add_special_tokens=False,
+                padding=False,
+                truncation=False,
+                return_tensors=None,
+            )["input_ids"]
+            rows = []
+            for tokens in encoded:
+                tokens = list(tokens)[:max(0, context_length - len(self.genlip_suffix_ids))]
+                rows.append(tokens + self.genlip_suffix_ids)
+            if not pad:
+                return [torch.tensor(tokens, dtype=torch.long) for tokens in rows]
+            if self.pad_token_id is None:
+                raise ValueError("GenLIP tokenizer mode requires a reserved pad_token_id.")
+            input_ids = torch.full(
+                (len(rows), context_length), self.pad_token_id, dtype=torch.long)
+            attention_mask = torch.zeros((len(rows), context_length), dtype=torch.bool)
+            for row_idx, tokens in enumerate(rows):
+                length = len(tokens)
+                input_ids[row_idx, :length] = torch.tensor(tokens, dtype=torch.long)
+                attention_mask[row_idx, :length] = True
+            return (input_ids, attention_mask) if output_mask else input_ids
         else:
             # Standard tokenization
             encoded = self.tokenizer(

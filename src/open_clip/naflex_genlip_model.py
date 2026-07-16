@@ -59,6 +59,9 @@ class NaFlexGenLipTextCfg:
     eos_id: int = 100277
     tokenizer_type: str = 'tiktoken'
     tiktoken_name: str = 'cl100k_base'
+    hf_tokenizer_name: Optional[str] = None
+    tokenizer_mode: Optional[str] = None
+    tokenizer_kwargs: Optional[dict] = None
     pre_norm: bool = False  # LayerNorm on the width-projected token embeddings before the trunk
 
 

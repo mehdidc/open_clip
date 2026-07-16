@@ -434,6 +434,12 @@ def parse_args(args):
         help="Load imagenet pretrained weights for image tower backbone if available.",
     )
     parser.add_argument(
+        "--pretrained-image-path",
+        default=None,
+        type=str,
+        help="Load a vision-tower checkpoint after model creation (including reference GenLIP checkpoints).",
+    )
+    parser.add_argument(
         "--lock-image",
         default=False,
         action='store_true',
@@ -929,9 +935,20 @@ def parse_args(args):
     if args.caption_loss_chunk_size <= 0:
         raise ValueError(f"--caption-loss-chunk-size must be > 0, got {args.caption_loss_chunk_size}.")
 
+    # Prefer config structure over a name substring: contrastive CLIP models may use a GenLIP
+    # vision tower without being generative GenLIP models themselves.
+    model_cfg = None
+    try:
+        from open_clip import get_model_config
+        model_cfg = get_model_config(args.model)
+    except (FileNotFoundError, RuntimeError, ValueError):
+        pass
+    model_cfg = model_cfg or {}
+    genlip_vision = bool((model_cfg.get('vision_cfg') or {}).get('genlip_cfg'))
+
     # GenLIP is a generative model with its own NaFlex linear patch-embed: it consumes the NaFlex data
     # pipeline but must NOT have its vision tower converted to a timm NaFlexVit (force_naflex_vision).
-    args.genlip = 'genlip' in args.model.lower()
+    args.genlip = 'genlip_cfg' in model_cfg or (not model_cfg and 'genlip' in args.model.lower())
     if args.genlip:
         args.use_naflex = True
         if args.accum_freq > 1:
@@ -951,8 +968,11 @@ def parse_args(args):
     if args.naflexclap:
         args.use_naflex = True
 
+    if genlip_vision:
+        args.use_naflex = True
+
     if args.use_naflex:
-        args.force_naflex_vision = not (args.genlip or args.genlap or args.naflexclap)
+        args.force_naflex_vision = not (args.genlip or args.genlap or args.naflexclap or genlip_vision)
         args.aug_cfg = dict(args.aug_cfg or {})
         args.aug_cfg["use_timm"] = True
         args.aug_cfg["naflex"] = True
