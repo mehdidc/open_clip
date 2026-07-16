@@ -127,6 +127,18 @@ def test_mrope_section_assertion():
         GenLipRotaryEmbedding(bad)
 
 
+def test_rotary_inv_freq_stays_fp32_after_dtype_conversion():
+    from open_clip.naflex_genlip_model import GenLipRotaryEmbedding, NaFlexGenLipTrunkCfg
+
+    cfg = NaFlexGenLipTrunkCfg(width=72, num_heads=1, mrope_section=(12, 12, 12))
+    rotary = GenLipRotaryEmbedding(cfg)
+    expected = rotary.inv_freq.clone()
+    rotary.to(dtype=torch.bfloat16)
+    rotary.to(dtype=torch.bfloat16)  # shared GenLIP aliases may visit the module more than once
+    assert rotary.inv_freq.dtype == torch.float32
+    torch.testing.assert_close(rotary.inv_freq, expected, rtol=0, atol=0)
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Tokenizer
 # ---------------------------------------------------------------------------------------------------------------------

@@ -14,7 +14,7 @@ authors = [
 ]
 description = "Open reproduction of consastive language-image pretraining (CLIP) and related."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["pytorch", "clip", "image-text", "language-image", "multimodal"]
 license = {text = "MIT"}
 classifiers = [

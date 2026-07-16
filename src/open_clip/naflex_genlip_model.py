@@ -174,10 +174,26 @@ class GenLipRotaryEmbedding(nn.Module):
             )
         self.mrope_section = tuple(cfg.mrope_section)
         self.mrope_interleaved = cfg.mrope_interleaved
+        self.head_dim = head_dim
+        self.rope_theta = cfg.rope_theta
         inv_freq = 1.0 / (
             cfg.rope_theta ** (torch.arange(0, head_dim, 2, dtype=torch.int64).float() / head_dim)
         )
         self.register_buffer('inv_freq', inv_freq, persistent=False)
+
+    def _apply(self, fn, recurse: bool = True):
+        # Match the reference GenLIP mixed-precision path: model parameters use bf16/fp16,
+        # while RoPE frequencies remain fp32 and are only cast after cos/sin are evaluated.
+        # A regular Module.to(dtype=...) would otherwise quantize this non-persistent buffer
+        # and introduce large phase errors at higher image coordinates.
+        super()._apply(fn, recurse=recurse)
+        self.inv_freq = 1.0 / (
+            self.rope_theta ** (
+                torch.arange(0, self.head_dim, 2, dtype=torch.float32, device=self.inv_freq.device)
+                / self.head_dim
+            )
+        )
+        return self
 
     @torch.no_grad()
     def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
