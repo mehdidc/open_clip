@@ -185,6 +185,12 @@ def test_factory_loads_reference_genlip_as_clip_vision_tower(tmp_path):
     torch.testing.assert_close(loaded.visual.patch_embed.proj.weight, source_model.patch_embed.proj.weight)
     torch.testing.assert_close(loaded.visual.proj.weight, source_model.out_proj.weight)
 
+    # CustomTextCLIP delegates --grad-checkpoint to its vision tower.
+    loaded.set_grad_checkpointing(True, impl="inline")
+    assert loaded.visual.trunk.grad_checkpointing is True
+    loaded.set_grad_checkpointing(False, impl="inline")
+    assert loaded.visual.trunk.grad_checkpointing is False
+
 
 def test_genlip_hf_tokenizer_appends_reference_suffix(monkeypatch):
     class DummyTokenizer:

@@ -689,6 +689,15 @@ class NaFlexGenLipVisualAdapter(nn.Module):
     def get_patch_size(self) -> Tuple[int, int]:
         return self.patch_size
 
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for block in self.trunk.layers:
+                composable_checkpoint(block)
+        else:
+            self.trunk.grad_checkpointing = enable
+
     def forward(self, image: Dict[str, torch.Tensor]) -> torch.Tensor:
         patches = image['patches']
         patch_coord = image['patch_coord']
