@@ -125,7 +125,7 @@ class GenLipTask(ImageTextTask):
             compute_loss=False,
             **{self._modality_kwarg: modality},
         )
-        ni = modality["patches"].shape[1]
+        ni = out["image_seq_len"]
         # Caption token text[:, j] (sequence position ni+j) is predicted by the logits at position ni-1+j,
         # so the text-predicting window is logits[:, ni-1:-1] -> (B, Lt, vocab).
         logits = out["logits"][:, ni - 1:-1]

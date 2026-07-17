@@ -18,7 +18,7 @@ from .model import CLIP, CustomTextCLIP, convert_weights_to_lp, convert_to_custo
 from .clap_model import CLAP
 from .coca_model import CoCa
 from .mammut_model import MaMMUT
-from .naflex_genlip_model import NaFlexGenLip
+from .naflex_genlip_model import GenLip, NaFlexGenLip
 from .naflex_genlap_model import NaFlexGenLap
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss, GenLipLoss
 from .naflex_convert import apply_naflex_vision_config, convert_naflex_state_dict
@@ -123,6 +123,21 @@ def _rescan_model_configs():
             )
             if has_vision or has_audio or has_genlap or has_mammut:
                 _MODEL_CONFIGS[cf.stem] = model_cfg
+
+    # The fixed/raw-pixel GenLIP variants differ only in their front end. Derive them from the
+    # authoritative NaFlex reference configs so L/16, SO/16 and g/16 cannot drift independently.
+    fixed_aliases = {}
+    for name, model_cfg in _MODEL_CONFIGS.items():
+        alias = None
+        if name.startswith('naflexgenlip_ref_'):
+            alias = 'genlip_ref_' + name.removeprefix('naflexgenlip_ref_')
+        elif name.startswith('clip_genlip_ref_'):
+            alias = 'clip_genlip_fixed_ref_' + name.removeprefix('clip_genlip_ref_')
+        if alias is not None:
+            fixed_cfg = deepcopy(model_cfg)
+            fixed_cfg['vision_cfg']['genlip_naflex'] = False
+            fixed_aliases[alias] = fixed_cfg
+    _MODEL_CONFIGS.update(fixed_aliases)
 
     _MODEL_CONFIGS = {k: v for k, v in sorted(_MODEL_CONFIGS.items(), key=lambda x: _natural_key(x[0]))}
 
@@ -574,10 +589,14 @@ def create_model(
     else:
         enable_default_text_weights = False  # for accurate logging
 
-    # Determine model class (NaFlexGenLip, CLIP, CustomTextCLIP, CoCa, CLAP)
+    # Determine model class (GenLip/NaFlexGenLip, CLIP, CustomTextCLIP, CoCa, CLAP)
     if 'genlip_cfg' in model_cfg:
         model_cfg.pop('custom_text', None)
-        model_class = NaFlexGenLip
+        model_class = (
+            NaFlexGenLip
+            if model_cfg.get('vision_cfg', {}).get('genlip_naflex', True)
+            else GenLip
+        )
     elif 'genlap_cfg' in model_cfg:
         # GenLAP: generative audio-language model (NaFlex spectrogram prefix). Its front-end config key is
         # 'audio_naflex_cfg' (NOT 'audio_cfg', which would trip is_audio_model -> CLAP routing).

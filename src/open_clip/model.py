@@ -80,6 +80,9 @@ class CLIPVisionCfg:
     # GenLIP vision tower. When set, the standard ViT/timm fields above are ignored except
     # image/patch size, pool_type, and the front-end controls below.
     genlip_cfg: Optional[dict] = None
+    # True keeps the pre-patchified NaFlex interface; False uses the reference fixed-resolution
+    # Conv2d/raw-pixel front end while sharing the same GenLIP trunk.
+    genlip_naflex: bool = True
     in_chans: int = 3
     proj_bias: bool = True
     input_norm: bool = False
@@ -209,6 +212,7 @@ def _build_vision_tower(
             GenLipPatchEmbed,
             GenLipRotaryEmbedding,
             GenLipTrunk,
+            GenLipVisualAdapter,
             NaFlexGenLipTrunkCfg,
             NaFlexGenLipVisionCfg,
             NaFlexGenLipVisualAdapter,
@@ -232,20 +236,21 @@ def _build_vision_tower(
             pool_type=vision_cfg.pool_type,
         )
         norm_layer = _make_norm_layer(trunk_cfg.norm_type, trunk_cfg.layer_norm_eps)
-        patch_embed = GenLipPatchEmbed(
-            genlip_vision_cfg,
-            trunk_cfg.width,
-            norm_eps=trunk_cfg.layer_norm_eps,
-            norm_layer=norm_layer,
-        )
-        visual = NaFlexGenLipVisualAdapter(
-            patch_embed,
-            GenLipTrunk(trunk_cfg),
-            GenLipRotaryEmbedding(trunk_cfg),
-            genlip_vision_cfg,
-            trunk_cfg.width,
-            embed_dim,
-        )
+        trunk = GenLipTrunk(trunk_cfg)
+        rotary = GenLipRotaryEmbedding(trunk_cfg)
+        if vision_cfg.genlip_naflex:
+            patch_embed = GenLipPatchEmbed(
+                genlip_vision_cfg,
+                trunk_cfg.width,
+                norm_eps=trunk_cfg.layer_norm_eps,
+                norm_layer=norm_layer,
+            )
+            visual = NaFlexGenLipVisualAdapter(
+                patch_embed, trunk, rotary, genlip_vision_cfg, trunk_cfg.width, embed_dim)
+        else:
+            visual = GenLipVisualAdapter(
+                trunk, rotary, genlip_vision_cfg, trunk_cfg.width, embed_dim,
+                norm_eps=trunk_cfg.layer_norm_eps, norm_layer=norm_layer)
     elif vision_cfg.timm_model_name:
         visual = TimmModel(
             vision_cfg.timm_model_name,

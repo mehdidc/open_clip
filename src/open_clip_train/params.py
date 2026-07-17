@@ -944,13 +944,16 @@ def parse_args(args):
     except (FileNotFoundError, RuntimeError, ValueError):
         pass
     model_cfg = model_cfg or {}
-    genlip_vision = bool((model_cfg.get('vision_cfg') or {}).get('genlip_cfg'))
+    vision_cfg = model_cfg.get('vision_cfg') or {}
+    genlip_vision = bool(vision_cfg.get('genlip_cfg'))
+    genlip_naflex = vision_cfg.get('genlip_naflex', True)
 
     # GenLIP is a generative model with its own NaFlex linear patch-embed: it consumes the NaFlex data
     # pipeline but must NOT have its vision tower converted to a timm NaFlexVit (force_naflex_vision).
     args.genlip = 'genlip_cfg' in model_cfg or (not model_cfg and 'genlip' in args.model.lower())
-    if args.genlip:
+    if args.genlip and genlip_naflex:
         args.use_naflex = True
+    if args.genlip:
         if args.accum_freq > 1:
             raise ValueError("GenLIP does not support --accum-freq > 1 (no contrastive feature caching).")
 
@@ -968,7 +971,7 @@ def parse_args(args):
     if args.naflexclap:
         args.use_naflex = True
 
-    if genlip_vision:
+    if genlip_vision and genlip_naflex:
         args.use_naflex = True
 
     if args.use_naflex:

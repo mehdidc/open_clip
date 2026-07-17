@@ -7,6 +7,32 @@ optimizer checkpoint.
 
 Supported reference architectures are `l16`, `so16`, and `g16`.
 
+## Fixed-resolution, non-NaFlex models
+
+The built-in `genlip_ref_{l16,so16,g16}` models mirror the reference stage-1 input path: they
+accept raw `[B, 3, H, W]` image tensors and apply the checkpoint's Conv2d patch embedding directly.
+Use `clip_genlip_fixed_ref_{l16,so16,g16}` to put the same fixed/raw-pixel image encoder in a
+contrastive CLIP.
+
+```python
+generative = open_clip.create_model(
+    "genlip_ref_so16", pretrained="/path/to/hf_ckpt/model.safetensors")
+contrastive = open_clip.create_model(
+    "clip_genlip_fixed_ref_so16",
+    pretrained_image_path="/path/to/hf_ckpt/model.safetensors",
+)
+```
+
+Custom configs select the same implementation by setting `vision_cfg.genlip_naflex` to `false`.
+Fixed models use the normal OpenCLIP image transform and do not enable the NaFlex batch scheduler.
+
+Both fixed and NaFlex GenLIP vision towers support OpenCLIP's image locking options. With
+`--lock-image`, the default `--lock-image-unlocked-groups 0` freezes the entire image tower;
+`1` leaves only the final vision projection trainable, and `2` leaves the projection plus the
+last transformer block/final norm trainable. Repeated calls can progressively unfreeze or re-lock
+the tower. `--lock-image-freeze-bn-stats` is accepted but is a no-op because GenLIP has no batch
+normalization layers.
+
 ## Continue generative GenLIP pretraining
 
 ```bash

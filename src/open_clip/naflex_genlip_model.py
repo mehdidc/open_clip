@@ -48,6 +48,7 @@ class NaFlexGenLipVisionCfg:
     input_norm: bool = False  # apply LayerNorm to the flat patch input before projection
     pre_norm: bool = False  # LayerNorm on the projected patch embeddings before the trunk (stream equalization)
     pool_type: str = 'avg'  # masked pooling used for vision-encoder-only feature extraction
+    genlip_naflex: bool = True  # factory selector; retained here so full-model configs parse uniformly
 
 
 @dataclass
@@ -420,6 +421,35 @@ class GenLipPatchEmbed(nn.Module):
         return self.norm_pre(self.proj(patches))
 
 
+class GenLipConvPatchEmbed(nn.Module):
+    """Reference fixed-resolution GenLIP Conv2d patch embedding over raw ``[B,C,H,W]`` pixels."""
+
+    def __init__(
+            self,
+            vision_cfg: NaFlexGenLipVisionCfg,
+            width: int,
+            norm_eps: float = 1e-6,
+            norm_layer: Optional[Callable[[int], nn.Module]] = None,
+    ):
+        super().__init__()
+        if vision_cfg.input_norm:
+            raise ValueError("input_norm is only supported by the NaFlex pre-patchified GenLIP front end")
+        if norm_layer is None:
+            norm_layer = lambda dim: nn.LayerNorm(dim, eps=norm_eps)
+        self.proj = nn.Conv2d(
+            vision_cfg.in_chans,
+            width,
+            kernel_size=vision_cfg.patch_size,
+            stride=vision_cfg.patch_size,
+            bias=vision_cfg.proj_bias,
+        )
+        self.norm_pre = norm_layer(width) if vision_cfg.pre_norm else nn.Identity()
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        x = self.proj(image).flatten(2).transpose(1, 2)
+        return self.norm_pre(x)
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Mask / position-id builders for the no-packing "rows" batch
 # ---------------------------------------------------------------------------------------------------------------------
@@ -637,7 +667,7 @@ def init_genlm_weights(model: nn.Module, std: float = 0.02) -> None:
                     nn.init.xavier_uniform_(lin.weight)
                     if lin.bias is not None:
                         nn.init.normal_(lin.bias, std=1e-6)
-        elif isinstance(module, nn.Linear):
+        elif isinstance(module, (nn.Linear, nn.Conv2d)):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
                 module.bias.data.zero_()
@@ -651,14 +681,51 @@ def init_genlm_weights(model: nn.Module, std: float = 0.02) -> None:
 
     # apply generic init first, then specialize attention/ffn (so nn.Linear default doesn't clobber them)
     for module in model.modules():
-        if isinstance(module, (nn.Linear, nn.Embedding, nn.LayerNorm)):
+        if isinstance(module, (nn.Linear, nn.Conv2d, nn.Embedding, nn.LayerNorm)):
             _init(module)
     for module in model.modules():
         if isinstance(module, (GenLipAttention, GenLipSwiGLUFFN, GenLipMLP)):
             _init(module)
 
 
-class NaFlexGenLipVisualAdapter(nn.Module):
+class _GenLipVisualLockMixin:
+    """Shared layer grouping/locking contract for fixed and NaFlex GenLIP vision adapters."""
+
+    def layer_groups(self, pooler_in_head: bool = True):
+        """Ordered complete parameter groups from image input to projection head.
+
+        The final trunk norm travels with the last transformer block, matching native OpenCLIP ViT.
+        ``pooler_in_head`` is accepted for the common vision/text tower interface and has no effect.
+        """
+        groups = [('embeddings', [self.patch_embed])]
+        n = len(self.trunk.layers)
+        for i, block in enumerate(self.trunk.layers):
+            members = [block]
+            if i == n - 1:
+                members.append(self.trunk.ln_post)
+            groups.append((f'layer.{i}', members))
+        if next(self.proj.parameters(), None) is not None:
+            groups.append(('proj', [self.proj]))
+        return groups
+
+    def lock(self, unlocked_groups: int = 0, freeze_bn_stats: bool = False):
+        """Freeze the tower, optionally leaving the last ``unlocked_groups`` trainable.
+
+        GenLIP contains no batch-normalization layers, so ``freeze_bn_stats`` is accepted for API
+        compatibility but requires no special handling. Every call sets both frozen and trainable groups
+        explicitly, allowing progressive unfreezing or re-locking.
+        """
+        groups = self.layer_groups()
+        n_freeze = len(groups) if not unlocked_groups else len(groups) - unlocked_groups
+        for i, (_, members) in enumerate(groups):
+            requires_grad = i >= n_freeze
+            for member in members:
+                params = [member] if isinstance(member, nn.Parameter) else member.parameters()
+                for param in params:
+                    param.requires_grad = requires_grad
+
+
+class NaFlexGenLipVisualAdapter(_GenLipVisualLockMixin, nn.Module):
     """Vision-encoder face of the model: runs image patches through the shared trunk and pools features.
 
     Holds references (not copies) to the shared patch-embed / trunk / rotary so the LM and the vision encoder
@@ -714,6 +781,68 @@ class NaFlexGenLipVisualAdapter(nn.Module):
         count = pv.sum(dim=1, keepdim=True).clamp(min=1.0)
         pooled = summed / count
         return self.proj(pooled)
+
+
+def build_fixed_image_layout(image: torch.Tensor, patch_size: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Return row-major patch coordinates and an all-valid mask for a raw fixed-resolution image batch."""
+    if image.ndim != 4:
+        raise ValueError(f"GenLIP raw images must have shape [B,C,H,W], got {tuple(image.shape)}")
+    height, width = image.shape[-2:]
+    if height % patch_size or width % patch_size:
+        raise ValueError(
+            f"GenLIP image size {(height, width)} must be divisible by patch size {patch_size}")
+    grid_h, grid_w = height // patch_size, width // patch_size
+    rows = torch.arange(grid_h, device=image.device)
+    cols = torch.arange(grid_w, device=image.device)
+    coords = torch.stack(torch.meshgrid(rows, cols, indexing='ij'), dim=-1).reshape(1, -1, 2)
+    coords = coords.expand(image.shape[0], -1, -1)
+    valid = torch.ones(image.shape[0], grid_h * grid_w, dtype=torch.bool, device=image.device)
+    return coords, valid
+
+
+class GenLipVisualAdapter(_GenLipVisualLockMixin, nn.Module):
+    """Fixed/raw-pixel vision face for GenLIP using the reference Conv2d patch embedding."""
+
+    def __init__(
+            self,
+            trunk: GenLipTrunk,
+            rotary: GenLipRotaryEmbedding,
+            vision_cfg: NaFlexGenLipVisionCfg,
+            width: int,
+            embed_dim: int,
+            norm_eps: float = 1e-6,
+            norm_layer: Optional[Callable[[int], nn.Module]] = None,
+    ):
+        super().__init__()
+        self.patch_embed = GenLipConvPatchEmbed(
+            vision_cfg, width, norm_eps=norm_eps, norm_layer=norm_layer)
+        self.trunk = trunk
+        self.rotary = rotary
+        self.pool_type = vision_cfg.pool_type
+        self.patch_size = (vision_cfg.patch_size, vision_cfg.patch_size)
+        self.image_size = (vision_cfg.image_size, vision_cfg.image_size)
+        self.image_seq_len = (vision_cfg.image_size // vision_cfg.patch_size) ** 2
+        self.preprocess_cfg: Dict = {}
+        self.proj = nn.Linear(width, embed_dim) if embed_dim != width else nn.Identity()
+
+    def get_patch_size(self) -> Tuple[int, int]:
+        return self.patch_size
+
+    @torch.jit.ignore
+    def set_grad_checkpointing(self, enable: bool = True, impl: str = 'inline'):
+        if impl == 'composable' and enable:
+            from torch.distributed._composable import checkpoint as composable_checkpoint
+            for block in self.trunk.layers:
+                composable_checkpoint(block)
+        else:
+            self.trunk.grad_checkpointing = enable
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        x = self.patch_embed(image)
+        coords, valid = build_fixed_image_layout(image, self.patch_size[0])
+        cos, sin = self.rotary(x, build_image_position_ids(coords, valid))
+        x = self.trunk(x, None, cos, sin)
+        return self.proj(x.mean(dim=1))
 
 
 class NaFlexGenLip(nn.Module):
@@ -775,6 +904,9 @@ class NaFlexGenLip(nn.Module):
         if cast_dtype is not None:
             self.to(dtype=cast_dtype)
 
+    def _image_inputs(self, image) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return self.patch_embed(image['patches']), image['patch_coord'], image['patch_valid']
+
     @torch.no_grad()
     def init_weights(self, std: float = 0.02):
         """Initialize weights following the GenLIP reference scheme."""
@@ -816,13 +948,12 @@ class NaFlexGenLip(nn.Module):
         Returns ``(hidden, image_seq_len)`` where ``hidden`` is the post-``ln_post``/``out_proj`` sequence of
         shape ``(B, S, text_embed_dim)`` and ``image_seq_len`` is the per-batch image patch count ``Ni``.
         """
-        patch_valid = image['patch_valid']
-        img_emb = self.patch_embed(image['patches'])  # (B, Ni, width)
+        img_emb, patch_coord, patch_valid = self._image_inputs(image)
         txt_emb = self.embed_text(text)  # (B, Lt, width)
         h = torch.cat([img_emb, txt_emb], dim=1)  # (B, S, width)
 
         attn_mask = build_prefix_lm_mask(patch_valid, text_valid)
-        pos = build_mrope_position_ids(image['patch_coord'], patch_valid, text_valid)
+        pos = build_mrope_position_ids(patch_coord, patch_valid, text_valid)
         cos, sin = self.rotary(h, pos)
 
         h = self.trunk(h, attn_mask, cos, sin)  # ln_post applied inside trunk
@@ -860,10 +991,11 @@ class NaFlexGenLip(nn.Module):
 
         if compute_loss and self.pack_prefix:
             # Packed layout: compact [valid image ; valid text ; PAD] per row (no padding between the two).
+            image_emb, patch_coord, patch_valid = self._image_inputs(image)
             caption_loss_ce, caption_loss_z = packed_caption_loss(
                 self,
-                self.patch_embed(image['patches']), image['patch_valid'],
-                build_mrope_position_ids(image['patch_coord'], image['patch_valid'], text_valid),
+                image_emb, patch_valid,
+                build_mrope_position_ids(patch_coord, patch_valid, text_valid),
                 text, text_valid,
                 z_loss=caption_z_loss,
                 compute_dtype=caption_loss_compute_dtype,
@@ -901,3 +1033,24 @@ class NaFlexGenLip(nn.Module):
 
         logits = self.lm_head(hidden)
         return {'logits': logits, 'image_seq_len': ni}
+
+
+class GenLip(NaFlexGenLip):
+    """Reference-style fixed-resolution GenLIP accepting raw ``[B,C,H,W]`` image tensors."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        norm_layer = _make_norm_layer(self.trunk_cfg.norm_type, self.trunk_cfg.layer_norm_eps)
+        self.visual = GenLipVisualAdapter(
+            self.trunk, self.rotary, self.vision_cfg, self.trunk_cfg.width, self.embed_dim,
+            norm_eps=self.trunk_cfg.layer_norm_eps, norm_layer=norm_layer)
+        # Keep the generative and vision faces on the same Conv2d patch embedding, as in the reference model.
+        self.patch_embed = self.visual.patch_embed
+        init_genlm_weights(self.patch_embed)
+        init_genlm_weights(self.visual.proj)
+        # Parent construction may already have cast the shared trunk; cast the newly-created front end/projector too.
+        self.visual.to(dtype=next(self.trunk.parameters()).dtype)
+
+    def _image_inputs(self, image: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        coords, valid = build_fixed_image_layout(image, self.vision_cfg.patch_size)
+        return self.patch_embed(image), coords, valid

@@ -301,8 +301,6 @@ def convert_genlip_state_dict(model, state_dict):
     for key, value in state_dict.items():
         if key.startswith('vision_embeddings.patch_embedding.'):
             suffix = key.removeprefix('vision_embeddings.patch_embedding.')
-            if suffix == 'weight':
-                value = value.flatten(1)
             canonical[f'patch_embed.proj.{suffix}'] = value
         elif key.startswith('visual.layers.'):
             canonical['trunk.layers.' + key.removeprefix('visual.layers.')] = value
@@ -338,6 +336,9 @@ def convert_genlip_state_dict(model, state_dict):
         if source_key not in canonical:
             continue
         value = canonical[source_key]
+        if source_key == 'patch_embed.proj.weight' and value.ndim == 4 and target_value.ndim == 2:
+            # NaFlex consumes flattened patches through Linear; the fixed adapter retains Conv2d.
+            value = value.flatten(1)
         if value.shape != target_value.shape:
             if vision_only and target_key.startswith('proj.'):
                 # A contrastive model may deliberately choose an embedding dimension different

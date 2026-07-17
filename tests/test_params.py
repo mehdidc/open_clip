@@ -51,3 +51,23 @@ def test_caption_loss_options_parse():
 def test_caption_loss_options_reject_invalid_values(option):
     with pytest.raises(ValueError):
         parse_args(option)
+
+
+@pytest.mark.parametrize("model_name,is_generative", [
+    ("genlip_ref_so16", True),
+    ("clip_genlip_fixed_ref_so16", False),
+])
+def test_fixed_genlip_configs_do_not_enable_naflex(model_name, is_generative):
+    args = parse_args(["--model", model_name])
+    assert args.genlip is is_generative
+    assert args.use_naflex is False
+
+
+@pytest.mark.parametrize("model_name,is_generative", [
+    ("naflexgenlip_ref_so16", True),
+    ("clip_genlip_ref_so16", False),
+])
+def test_naflex_genlip_configs_still_enable_naflex(model_name, is_generative):
+    args = parse_args(["--model", model_name])
+    assert args.genlip is is_generative
+    assert args.use_naflex is True
