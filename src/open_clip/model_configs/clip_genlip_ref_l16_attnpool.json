@@ -1,0 +1,33 @@
+{
+    "embed_dim": 1024,
+    "preprocess_cfg": {"mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
+    "custom_text": true,
+    "vision_cfg": {
+        "image_size": 224,
+	"attentional_pool": true,
+        "patch_size": 16,
+        "in_chans": 3,
+        "proj_bias": true,
+        "pool_type": "avg",
+        "genlip_cfg": {
+            "width": 1152,
+            "depth": 24,
+            "num_heads": 16,
+            "intermediate_size": 2752,
+            "text_embed_dim": 1024,
+            "mrope_section": [12, 12, 12],
+            "rope_theta": 10000.0,
+            "ls_init_value": 0.1,
+            "drop_path_rate": 0.1,
+            "gated_attention": true,
+            "use_swiglu_ffn": true,
+            "mrope_interleaved": true,
+            "hidden_act": "silu",
+            "layer_norm_eps": 1e-6,
+            "max_position_embeddings": 16384,
+            "attention_bias": true,
+            "mlp_bias": true
+        }
+    },
+    "text_cfg": {"context_length": 77, "vocab_size": 49408, "width": 768, "heads": 12, "layers": 12}
+}
