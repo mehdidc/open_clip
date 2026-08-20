@@ -5,7 +5,7 @@ This module requires ``transformers`` and is imported lazily by model
 """
 import copy
 import logging
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -134,6 +134,116 @@ class MultimodalGenerationWrapper(nn.Module, GenerationMixin):
     def _reorder_cache(self, past_key_values, beam_idx):
         # TODO(kv-cache): Reorder cached K/V for beam search beam reordering.
         return past_key_values
+
+    def get_experts_implementation(self):
+        return {"": self.config._experts_implementation}
+
+    def set_experts_implementation(self, experts_implementation):
+        if isinstance(experts_implementation, dict):
+            experts_implementation = experts_implementation.get("", self.config._experts_implementation)
+        self.config._experts_implementation = experts_implementation
+
+
+MediaInput = Union[torch.Tensor, Dict[str, torch.Tensor]]
+
+
+def _media_batch_size(media: MediaInput) -> int:
+    if isinstance(media, torch.Tensor):
+        return media.shape[0]
+    for value in media.values():
+        if isinstance(value, torch.Tensor):
+            return value.shape[0]
+    raise ValueError("Prefix-LM media dictionary does not contain a tensor batch.")
+
+
+def _expand_media_batch(media: MediaInput, target_batch_size: int) -> MediaInput:
+    """Repeat a media batch for HF beam expansion without modifying the caller's input."""
+    batch_size = _media_batch_size(media)
+    if batch_size == target_batch_size:
+        return media
+    if target_batch_size % batch_size:
+        raise ValueError(
+            f"Generation input batch ({target_batch_size}) is not a multiple of the media batch ({batch_size})."
+        )
+    repeats = target_batch_size // batch_size
+    if isinstance(media, torch.Tensor):
+        return media.repeat_interleave(repeats, dim=0)
+    return {
+        key: value.repeat_interleave(repeats, dim=0) if isinstance(value, torch.Tensor) else value
+        for key, value in media.items()
+    }
+
+
+class PrefixLMGenerationWrapper(nn.Module, GenerationMixin):
+    """Expose an image-prefix LM through ``GenerationMixin``.
+
+    GenLIP can predict its first text token directly from the final image-prefix
+    state and some checkpoints intentionally define no BOS token. Hugging Face
+    generation requires at least one input id, so the empty-prompt path carries
+    a private seed id which is removed before every model forward and stripped
+    from the returned sequence.
+    """
+
+    main_input_name = "input_ids"
+    _is_stateful = False
+
+    def __init__(
+            self,
+            model: nn.Module,
+            media: MediaInput,
+            strip_seed: bool,
+            vocab_size: int,
+            pad_token_id: int,
+            eos_token_id: int,
+            bos_token_id: int,
+    ):
+        super().__init__()
+        self.prefix_lm = model
+        self.media = media
+        self.strip_seed = strip_seed
+        self.config = _SimpleConfig(
+            vocab_size=vocab_size,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            bos_token_id=bos_token_id,
+        )
+        self.generation_config = GenerationConfig(
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+        )
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.prefix_lm.parameters()).device
+
+    def prepare_inputs_for_generation(self, input_ids, **kwargs):
+        return {"input_ids": input_ids}
+
+    def forward(self, input_ids: torch.Tensor, **kwargs) -> CausalLMOutputWithPast:
+        text = input_ids[:, 1:] if self.strip_seed else input_ids
+        text_valid = torch.ones_like(text, dtype=torch.bool)
+        media = _expand_media_batch(self.media, input_ids.shape[0])
+        output = self.prefix_lm(media, text, text_valid=text_valid)
+        logits = output["logits"]
+        if text.shape[1] == 0 and isinstance(media, dict) and "patch_valid" in media:
+            # Batched NaFlex inputs may pad their image prefixes to different lengths.
+            # The first caption token is predicted by the last *valid* image token.
+            last_valid = media["patch_valid"].long().sum(dim=1).sub(1).clamp_min(0)
+            rows = torch.arange(logits.shape[0], device=logits.device)
+            logits = logits[rows, last_valid].unsqueeze(1)
+        return CausalLMOutputWithPast(logits=logits, past_key_values=None)
+
+    def _reorder_cache(self, past_key_values, beam_idx):
+        return past_key_values
+
+    def get_experts_implementation(self):
+        return {"": self.config._experts_implementation}
+
+    def set_experts_implementation(self, experts_implementation):
+        if isinstance(experts_implementation, dict):
+            experts_implementation = experts_implementation.get("", self.config._experts_implementation)
+        self.config._experts_implementation = experts_implementation
 
 
 def _normalize_token_id(value: Any, allow_sequence: bool = False):
@@ -492,5 +602,108 @@ def generate_multimodal(
             if squeeze_output:
                 output = output.squeeze(0)
             return output
+    finally:
+        model.train(was_training)
+
+
+def generate_prefix_lm(
+        model: nn.Module,
+        media: MediaInput,
+        text: Optional[torch.Tensor] = None,
+        text_valid: Optional[torch.Tensor] = None,
+        seq_len: int = 30,
+        max_seq_len: Optional[int] = None,
+        temperature: float = 1.,
+        generation_type: str = "beam_search",
+        top_p: float = 0.1,
+        top_k: int = 1,
+        pad_token_id: Optional[int] = None,
+        eos_token_id: Optional[int] = None,
+        sot_token_id: Optional[int] = None,
+        num_beams: int = 6,
+        num_beam_groups: int = 3,
+        min_seq_len: int = 1,
+        repetition_penalty: float = 1.0,
+        fixed_output_length: bool = False,
+        generation_config: Optional[GenerationConfig] = None,
+) -> torch.Tensor:
+    """Generate text from a prefix-LM whose media prefix is part of its causal sequence."""
+    pad_token_id, eos_token_id, resolved_bos_id = resolve_generation_token_ids(
+        model,
+        pad_token_id=pad_token_id,
+        eos_token_id=eos_token_id,
+        sot_token_id=sot_token_id,
+    )
+    configured_bos_id = getattr(getattr(model, 'text_cfg', None), 'bos_id', resolved_bos_id)
+    batch_size = _media_batch_size(media)
+    device = next(model.parameters()).device
+
+    strip_seed = text is None or text.numel() == 0
+    if strip_seed:
+        # This token exists only to satisfy GenerationMixin's non-empty-input contract.
+        seed_id = pad_token_id if configured_bos_id is None else int(configured_bos_id)
+        prompt = torch.full((batch_size, 1), seed_id, device=device, dtype=torch.long)
+        squeeze_output = False
+    else:
+        prompt, squeeze_output = prepare_generation_prompt(
+            text=text,
+            text_valid=text_valid,
+            batch_size=batch_size,
+            device=device,
+            sot_token_id=resolved_bos_id,
+        )
+
+    generation_config = build_generation_config(
+        generation_config=generation_config,
+        generation_type=generation_type,
+        seq_len=seq_len + int(strip_seed),
+        min_seq_len=min_seq_len + int(strip_seed),
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        num_beams=num_beams,
+        num_beam_groups=num_beam_groups,
+        repetition_penalty=repetition_penalty,
+        pad_token_id=pad_token_id,
+        eos_token_id=eos_token_id,
+        sot_token_id=resolved_bos_id,
+    )
+    target_len = validate_generation_lengths(
+        prompt_len=prompt.shape[1],
+        generation_config=generation_config,
+        seq_len=seq_len + int(strip_seed),
+        max_seq_len=(max_seq_len + int(strip_seed)) if max_seq_len is not None else None,
+        context_length=(getattr(model, 'context_length', None) or 0) + int(strip_seed),
+    )
+
+    was_training = model.training
+    model.eval()
+    try:
+        wrapper = PrefixLMGenerationWrapper(
+            model=model,
+            media=media,
+            strip_seed=strip_seed,
+            vocab_size=model.lm_head.out_features,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            bos_token_id=resolved_bos_id,
+        )
+        with torch.no_grad():
+            output = wrapper.generate(prompt, generation_config=generation_config)
+        if fixed_output_length and output.shape[1] < target_len:
+            output = torch.cat(
+                (output, torch.full(
+                    (output.shape[0], target_len - output.shape[1]),
+                    pad_token_id,
+                    device=output.device,
+                    dtype=output.dtype,
+                )),
+                dim=1,
+            )
+        if strip_seed:
+            output = output[:, 1:]
+        if squeeze_output:
+            output = output.squeeze(0)
+        return output
     finally:
         model.train(was_training)

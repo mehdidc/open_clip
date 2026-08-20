@@ -41,6 +41,8 @@ dependencies = [
     'huggingface-hub',
     'safetensors',
     'timm>=1.0.17',
+    "pycocoevalcap>=1.2",
+    "scikit-learn>=1.7.2",
 ]
 dynamic = ["version"]
 
@@ -52,6 +54,7 @@ training = [
     'transformers[sentencepiece]',
     'timm>=1.0.17',
     'fsspec',
+    'tensorboard'
 ]
 audio = [
     'torchaudio',

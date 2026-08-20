@@ -102,6 +102,33 @@ def test_model_forward_shapes():
     assert torch.isfinite(out['logits']).all()
 
 
+def test_generate_without_prompt_predicts_directly_from_image_prefix():
+    transformers = pytest.importorskip('transformers')
+    model, _, _ = open_clip.create_model_and_transforms(TEST_MODEL)
+    model.eval()
+    image = _make_batch(model.pad_id, b=2)['image']
+    config = transformers.GenerationConfig(max_new_tokens=2, do_sample=True, top_k=1)
+
+    out = model.generate(image, generation_config=config)
+
+    # The internal GenerationMixin seed is stripped: only requested caption tokens remain.
+    assert out.shape == (2, 2)
+
+
+def test_generate_preserves_raw_text_prefix():
+    transformers = pytest.importorskip('transformers')
+    model, _, _ = open_clip.create_model_and_transforms(TEST_MODEL)
+    model.eval()
+    image = _make_batch(model.pad_id, b=2)['image']
+    prompt = torch.tensor([[5, 6], [7, 8]])
+    config = transformers.GenerationConfig(max_new_tokens=2, do_sample=True, top_k=1)
+
+    out = model.generate(image, text=prompt, generation_config=config)
+
+    assert out.shape == (2, 4)
+    assert torch.equal(out[:, :2], prompt)
+
+
 def test_encode_image():
     model, _, _ = open_clip.create_model_and_transforms(TEST_MODEL)
     batch = _make_batch(model.pad_id)

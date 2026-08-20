@@ -878,6 +878,8 @@ class NaFlexGenLip(nn.Module):
         width = genlip_cfg.width
         text_embed_dim = genlip_cfg.text_embed_dim
         self.pad_id = text_cfg.pad_id
+        self.bos_id = text_cfg.bos_id
+        self.eos_id = text_cfg.eos_id
         self.context_length = text_cfg.context_length
 
         # Shared norm policy (trunk norm_type) applied to every body norm: patch/text pre-norms and the trunk.
@@ -1033,6 +1035,58 @@ class NaFlexGenLip(nn.Module):
 
         logits = self.lm_head(hidden)
         return {'logits': logits, 'image_seq_len': ni}
+
+    def generate(
+            self,
+            image,
+            text=None,
+            seq_len=30,
+            max_seq_len=None,
+            temperature=1.,
+            generation_type="beam_search",
+            top_p=0.1,
+            top_k=1,
+            pad_token_id=None,
+            eos_token_id=None,
+            sot_token_id=None,
+            num_beams=6,
+            num_beam_groups=3,
+            min_seq_len=1,
+            repetition_penalty=1.0,
+            fixed_output_length=False,
+            generation_config=None,
+            text_valid=None,
+    ):
+        """Autoregressively generate captions from the image-prefix LM."""
+        try:
+            from .generation import generate_prefix_lm
+        except (ImportError, Exception) as e:
+            raise RuntimeError(
+                "Please install transformers for generate functionality. "
+                "`pip install transformers`."
+            ) from e
+
+        return generate_prefix_lm(
+            self,
+            media=image,
+            text=text,
+            text_valid=text_valid,
+            seq_len=seq_len,
+            max_seq_len=max_seq_len or self.context_length,
+            temperature=temperature,
+            generation_type=generation_type,
+            top_p=top_p,
+            top_k=top_k,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            sot_token_id=sot_token_id,
+            num_beams=num_beams,
+            num_beam_groups=num_beam_groups,
+            min_seq_len=min_seq_len,
+            repetition_penalty=repetition_penalty,
+            fixed_output_length=fixed_output_length,
+            generation_config=generation_config,
+        )
 
 
 class GenLip(NaFlexGenLip):
